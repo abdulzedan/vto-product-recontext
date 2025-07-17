@@ -1,0 +1,4 @@
+ID,Image Src,Image Command,Image Position
+sample_001,https://example.com/sample-shirt.jpg,process,front
+sample_002,https://example.com/sample-vase.jpg,enhance,center
+sample_003,https://example.com/sample-shoes.jpg,recontextualize,side
