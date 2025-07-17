@@ -274,10 +274,15 @@ class VirtualTryOnProcessor(BaseProcessor):
         try:
             start_time = time.time()
             
-            response = self.client.predict(
-                endpoint=self.model_endpoint,
-                instances=instances,
-                parameters=parameters,
+            # Use executor to avoid blocking the async event loop
+            loop = asyncio.get_event_loop()
+            response = await loop.run_in_executor(
+                None,
+                lambda: self.client.predict(
+                    endpoint=self.model_endpoint,
+                    instances=instances,
+                    parameters=parameters,
+                )
             )
             
             api_time = time.time() - start_time
@@ -320,7 +325,7 @@ class VirtualTryOnProcessor(BaseProcessor):
             apparel_image_bytes = self._prepare_apparel_image(image_path)
             
             # Analyze apparel to select appropriate model
-            apparel_analysis = self.analyzer.classify_image(image_path)
+            apparel_analysis = await self.analyzer.classify_image(image_path)
             
             # Select model based on apparel characteristics and gender
             apparel_info = {
@@ -391,7 +396,7 @@ class VirtualTryOnProcessor(BaseProcessor):
                 # Use the actual model image path for quality analysis
                 model_image_path = selected_model['path']
                 
-                quality_feedback = self.analyzer.analyze_virtual_try_on_quality(
+                quality_feedback = await self.analyzer.analyze_virtual_try_on_quality(
                     result_image=result_image,
                     original_apparel=image_path,
                     model_image=model_image_path,

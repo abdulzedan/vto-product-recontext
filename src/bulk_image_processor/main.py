@@ -147,27 +147,14 @@ class BulkImageProcessor:
         classified_images = []
         progress = ProgressTracker(len(download_results))
         
-        # Use ThreadPoolExecutor for CPU-bound classification tasks
-        with ThreadPoolExecutor(max_workers=self.settings.processing.max_workers) as executor:
-            # Submit classification tasks
-            future_to_record = {
-                executor.submit(self._classify_single_image, record, path): (record, path)
-                for record, path in download_results
-            }
-            
-            # Process completed tasks
-            for future in as_completed(future_to_record):
-                if self.shutdown_requested:
-                    logger.info("Shutdown requested, stopping classification")
-                    break
-                
-                record, path = future_to_record[future]
-                
+        # Use asyncio semaphore for concurrent classification tasks
+        semaphore = asyncio.Semaphore(self.settings.processing.max_workers)
+        
+        async def classify_with_semaphore(record: ImageRecord, path: Path) -> Tuple[ImageRecord, Path, ImageCategory]:
+            async with semaphore:
                 try:
-                    category = future.result()
-                    classified_images.append((record, path, category))
-                    progress.update(success=True)
-                    
+                    category = await self._classify_single_image(record, path)
+                    return (record, path, category)
                 except Exception as e:
                     logger.error(
                         "Classification failed",
@@ -175,16 +162,36 @@ class BulkImageProcessor:
                         error=str(e),
                     )
                     # Default to unknown category on failure
-                    classified_images.append((record, path, ImageCategory.UNKNOWN))
-                    progress.update(success=False)
+                    return (record, path, ImageCategory.UNKNOWN)
+        
+        # Create classification tasks
+        tasks = [
+            classify_with_semaphore(record, path)
+            for record, path in download_results
+        ]
+        
+        # Process completed tasks
+        for task in asyncio.as_completed(tasks):
+            if self.shutdown_requested:
+                logger.info("Shutdown requested, stopping classification")
+                break
+            
+            try:
+                record, path, category = await task
+                classified_images.append((record, path, category))
+                progress.update(success=True)
+                
+            except Exception as e:
+                logger.error("Classification task failed", error=str(e))
+                progress.update(success=False)
         
         progress.log_progress()
         return classified_images
     
-    def _classify_single_image(self, record: ImageRecord, path: Path) -> ImageCategory:
+    async def _classify_single_image(self, record: ImageRecord, path: Path) -> ImageCategory:
         """Classify a single image."""
         try:
-            result = self.analyzer.classify_image(
+            result = await self.analyzer.classify_image(
                 path,
                 additional_context=f"Command: {record.image_command}, Position: {record.image_position}",
             )

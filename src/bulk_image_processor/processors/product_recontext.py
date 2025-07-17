@@ -144,11 +144,11 @@ class ProductRecontextProcessor(BaseProcessor):
             product_image_bytes = self._prepare_product_image(image_path)
             
             # Analyze product to understand what it is
-            product_analysis = self.analyzer.classify_image(image_path)
+            product_analysis = await self.analyzer.classify_image(image_path)
             
             # Generate compelling prompt for high-end retail
             product_description = self._extract_product_description(record, product_analysis)
-            generated_prompt = self.analyzer.generate_product_recontext_prompt(
+            generated_prompt = await self.analyzer.generate_product_recontext_prompt(
                 image_path,
                 product_description,
             )
@@ -195,7 +195,7 @@ class ProductRecontextProcessor(BaseProcessor):
             quality_score = 0.8  # Placeholder score
             
             try:
-                quality_feedback = self.analyzer.analyze_product_recontext_quality(
+                quality_feedback = await self.analyzer.analyze_product_recontext_quality(
                     result_image=result_image,
                     original_product=image_path,
                     generated_prompt=generated_prompt,

@@ -1,5 +1,6 @@
 """Gemini-based image analyzer for classification and feedback."""
 
+import asyncio
 import json
 import time
 from enum import Enum
@@ -83,7 +84,7 @@ class GeminiAnalyzer:
         wait=wait_exponential(multiplier=1, min=4, max=10),
         reraise=True,
     )
-    def classify_image(
+    async def classify_image(
         self,
         image: Union[Image.Image, Path, str],
         additional_context: Optional[str] = None,
@@ -100,12 +101,16 @@ class GeminiAnalyzer:
             prompt = self._create_classification_prompt(additional_context)
             
             # Generate response
-            response = self.client.generate_content(
-                [prompt, image],
-                generation_config=genai.types.GenerationConfig(
-                    temperature=self.settings.gemini.temperature,
-                    max_output_tokens=self.settings.gemini.max_output_tokens,
-                ),
+            loop = asyncio.get_event_loop()
+            response = await loop.run_in_executor(
+                None,
+                lambda: self.client.generate_content(
+                    [prompt, image],
+                    generation_config=genai.types.GenerationConfig(
+                        temperature=self.settings.gemini.temperature,
+                        max_output_tokens=self.settings.gemini.max_output_tokens,
+                    ),
+                )
             )
             
             # Parse response
@@ -219,7 +224,7 @@ class GeminiAnalyzer:
         wait=wait_exponential(multiplier=1, min=4, max=10),
         reraise=True,
     )
-    def analyze_virtual_try_on_quality(
+    async def analyze_virtual_try_on_quality(
         self,
         result_image: Union[Image.Image, Path, str],
         original_apparel: Union[Image.Image, Path, str],
@@ -241,12 +246,16 @@ class GeminiAnalyzer:
             prompt = self._create_vto_feedback_prompt()
             
             # Generate response
-            response = self.client.generate_content(
-                [prompt, result_image, original_apparel, model_image],
-                generation_config=genai.types.GenerationConfig(
-                    temperature=self.settings.gemini.temperature,
-                    max_output_tokens=self.settings.gemini.max_output_tokens,
-                ),
+            loop = asyncio.get_event_loop()
+            response = await loop.run_in_executor(
+                None,
+                lambda: self.client.generate_content(
+                    [prompt, result_image, original_apparel, model_image],
+                    generation_config=genai.types.GenerationConfig(
+                        temperature=self.settings.gemini.temperature,
+                        max_output_tokens=self.settings.gemini.max_output_tokens,
+                    ),
+                )
             )
             
             # Parse response
@@ -317,7 +326,7 @@ class GeminiAnalyzer:
         wait=wait_exponential(multiplier=1, min=4, max=10),
         reraise=True,
     )
-    def analyze_product_recontext_quality(
+    async def analyze_product_recontext_quality(
         self,
         result_image: Union[Image.Image, Path, str],
         original_product: Union[Image.Image, Path, str],
@@ -337,12 +346,16 @@ class GeminiAnalyzer:
             prompt = self._create_product_recontext_feedback_prompt(generated_prompt)
             
             # Generate response
-            response = self.client.generate_content(
-                [prompt, result_image, original_product],
-                generation_config=genai.types.GenerationConfig(
-                    temperature=self.settings.gemini.temperature,
-                    max_output_tokens=self.settings.gemini.max_output_tokens,
-                ),
+            loop = asyncio.get_event_loop()
+            response = await loop.run_in_executor(
+                None,
+                lambda: self.client.generate_content(
+                    [prompt, result_image, original_product],
+                    generation_config=genai.types.GenerationConfig(
+                        temperature=self.settings.gemini.temperature,
+                        max_output_tokens=self.settings.gemini.max_output_tokens,
+                    ),
+                )
             )
             
             # Parse response
@@ -447,7 +460,7 @@ class GeminiAnalyzer:
                 metadata={},
             )
     
-    def generate_product_recontext_prompt(
+    async def generate_product_recontext_prompt(
         self,
         product_image: Union[Image.Image, Path, str],
         product_description: Optional[str] = None,
@@ -464,12 +477,16 @@ class GeminiAnalyzer:
             prompt = self._create_prompt_generation_prompt(product_description)
             
             # Generate response
-            response = self.client.generate_content(
-                [prompt, product_image],
-                generation_config=genai.types.GenerationConfig(
-                    temperature=0.3,  # Lower temperature for more consistent prompts
-                    max_output_tokens=512,
-                ),
+            loop = asyncio.get_event_loop()
+            response = await loop.run_in_executor(
+                None,
+                lambda: self.client.generate_content(
+                    [prompt, product_image],
+                    generation_config=genai.types.GenerationConfig(
+                        temperature=0.3,  # Lower temperature for more consistent prompts
+                        max_output_tokens=512,
+                    ),
+                )
             )
             
             # Extract and clean the generated prompt
