@@ -1,0 +1,63 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+ENV/
+env/
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Testing
+.tox/
+.coverage
+.coverage.*
+htmlcov/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Project specific
+output/
+logs/
+*.log
+.env
+.env.local
+*.json
+!.env.example
+!package.json
+!tsconfig.json
+
+# Temporary files
+*.tmp
+*.bak
+.temp/
+
+# Google Cloud
+credentials/
+*.key
+service-account-*.json
+
+# Images and downloads
+*.jpg
+*.jpeg
+*.png
+*.gif
+*.bmp
+*.tiff
+*.webp
+!test_images/
+!docs/images/
