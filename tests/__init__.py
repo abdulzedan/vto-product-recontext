@@ -1,0 +1,1 @@
+"""Test suite for bulk image processor."""
