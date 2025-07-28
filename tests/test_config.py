@@ -217,33 +217,39 @@ class TestSettings:
         assert settings.log_level == 'DEBUG'
         assert settings.log_format == 'text'
     
-    def test_required_env_vars(self):
+    def test_required_env_vars(self, monkeypatch, tmp_path):
         """Test that required environment variables are validated."""
-        # Remove required env vars
-        with patch.dict(os.environ, {}, clear=True):
-            with pytest.raises(ValidationError) as exc_info:
-                Settings()
-            
-            # Just verify that validation error occurs - don't check specific fields
-            assert len(exc_info.value.errors()) > 0
+        # Create a temporary directory without .env file
+        monkeypatch.chdir(tmp_path)
+        
+        # Clear all environment variables
+        monkeypatch.delenv('PROJECT_ID', raising=False)
+        monkeypatch.delenv('GOOGLE_CLOUD_STORAGE', raising=False) 
+        monkeypatch.delenv('GEMINI_API_KEY', raising=False)
+        
+        # Now Settings should fail to initialize
+        with pytest.raises(ValidationError) as exc_info:
+            Settings()
+        
+        # Just verify that validation error occurs
+        assert len(exc_info.value.errors()) > 0
     
     @patch.dict(os.environ, {
         'PROJECT_ID': 'test-project',
         'GOOGLE_CLOUD_STORAGE': 'test-bucket',
-        'GEMINI_API_KEY': 'test-key'
+        'GEMINI_API_KEY': 'test-key',
+        'MAX_WORKERS': '20',
+        'MAX_RETRIES': '3',
+        'DOWNLOAD_TIMEOUT': '60',
+        'PROCESSING_TIMEOUT': '600',
+        'LOCAL_OUTPUT_DIR': '/test/output',
+        'ENABLE_GCS_UPLOAD': 'true',
+        'LOG_LEVEL': 'INFO',
+        'LOG_FORMAT': 'json'
     })
     def test_property_accessors(self):
         """Test property accessors for configuration groups."""
-        settings = Settings(
-            max_workers=20,
-            max_retries=3,
-            download_timeout=60,
-            processing_timeout=600,
-            local_output_dir="/test/output",
-            enable_gcs_upload=True,
-            log_level="INFO",
-            log_format="json"
-        )
+        settings = Settings()
         
         # Test processing config
         processing = settings.processing
