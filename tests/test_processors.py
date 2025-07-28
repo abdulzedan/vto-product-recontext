@@ -383,12 +383,18 @@ class TestProductRecontextProcessor:
         assert processor.model_endpoint is not None
     
     @pytest.mark.asyncio
+    @patch('google.cloud.aiplatform.init')
+    @patch('google.cloud.aiplatform.gapic.PredictionServiceClient')
     @patch('google.cloud.aiplatform.Endpoint')
     async def test_process_product_image_success(
-        self, mock_endpoint_class, mock_settings, mock_analyzer,
+        self, mock_endpoint_class, mock_client, mock_init, mock_settings, mock_analyzer,
         sample_image_record, tmp_path
     ):
         """Test successful product image processing."""
+        # Mock client setup
+        mock_client_instance = MagicMock()
+        mock_client.return_value = mock_client_instance
+        
         # Mock endpoint
         mock_endpoint = MagicMock()
         mock_endpoint_class.return_value = mock_endpoint
@@ -468,12 +474,18 @@ class TestProductRecontextProcessor:
         assert result.output_path is not None
     
     @pytest.mark.asyncio
+    @patch('google.cloud.aiplatform.init')
+    @patch('google.cloud.aiplatform.gapic.PredictionServiceClient')
     @patch('google.cloud.aiplatform.Endpoint')
     async def test_process_product_with_style_preference(
-        self, mock_endpoint_class, mock_settings, mock_analyzer,
+        self, mock_endpoint_class, mock_client, mock_init, mock_settings, mock_analyzer,
         tmp_path
     ):
         """Test processing with style preference from command."""
+        # Mock client setup
+        mock_client_instance = MagicMock()
+        mock_client.return_value = mock_client_instance
+        
         mock_endpoint = MagicMock()
         mock_endpoint_class.return_value = mock_endpoint
         
