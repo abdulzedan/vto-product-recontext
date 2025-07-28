@@ -15,6 +15,7 @@ from bulk_image_processor.main import BulkImageProcessor
 from bulk_image_processor.downloader import ImageRecord
 from bulk_image_processor.analyzer import ImageCategory, ClassificationResult
 from bulk_image_processor.config import Settings
+from bulk_image_processor.processors.virtual_try_on import VirtualTryOnProcessor
 
 
 class TestBulkImageProcessorIntegration:
@@ -81,21 +82,19 @@ class TestBulkImageProcessorIntegration:
     @patch('bulk_image_processor.downloader.ImageDownloader.download_single_image')
     @patch('google.generativeai.GenerativeModel')
     @patch('google.cloud.aiplatform.Endpoint')
-    @patch('bulk_image_processor.processors.virtual_try_on.load_model_pairs')
+    @patch('google.cloud.aiplatform.init')
+    @patch('google.cloud.aiplatform.gapic.PredictionServiceClient')
+    @patch.object(VirtualTryOnProcessor, '_load_model_images')
     async def test_end_to_end_processing(
-        self, mock_load_models, mock_endpoint_class, mock_gemini_model,
+        self, mock_load_images, mock_client, mock_init, mock_endpoint_class, mock_gemini_model,
         mock_download, mock_settings_integration, sample_csv_file,
         mock_image_downloads, tmp_path
     ):
         """Test end-to-end processing from CSV to output."""
-        # Setup model pairs for VTO
-        mock_load_models.return_value = [{
-            "model_id": "model_001",
-            "gender": "female",
-            "pose": "front",
-            "style": "casual",
-            "image_path": "/models/model_001.jpg"
-        }]
+        # Setup VTO client mocks
+        mock_client_instance = MagicMock()
+        mock_client.return_value = mock_client_instance
+        mock_load_images.return_value = None
         
         # Mock image downloads
         async def mock_download_impl(record, output_dir):
@@ -173,13 +172,18 @@ class TestBulkImageProcessorIntegration:
         # Mock image conversion
         with patch('bulk_image_processor.processors.virtual_try_on.prediction_to_pil_image') as mock_vto_convert:
             with patch('bulk_image_processor.processors.product_recontext.prediction_to_pil_image') as mock_pr_convert:
-                output_img = Image.new('RGB', (100, 100), color='green')
-                mock_vto_convert.return_value = output_img
-                mock_pr_convert.return_value = output_img
-                
-                # Run the processor
-                processor = BulkImageProcessor(mock_settings_integration)
-                summary = await processor.process_from_csv(sample_csv_file)
+                with patch('bulk_image_processor.storage.StorageManager._setup_storage') as mock_gcs_init:
+                    output_img = Image.new('RGB', (100, 100), color='green')
+                    mock_vto_convert.return_value = output_img
+                    mock_pr_convert.return_value = output_img
+                    mock_gcs_init.return_value = None
+                    
+                    # Disable GCS upload for this test
+                    mock_settings_integration.enable_gcs_upload = False
+                    
+                    # Run the processor
+                    processor = BulkImageProcessor(mock_settings_integration)
+                    summary = await processor.process_from_csv(sample_csv_file)
         
         # Verify summary statistics
         assert summary['download_stats']['total_records'] == 5
