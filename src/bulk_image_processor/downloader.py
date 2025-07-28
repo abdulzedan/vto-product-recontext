@@ -88,7 +88,7 @@ class ImageDownloader:
         logger.info("Loading CSV file", path=str(csv_path))
         
         try:
-            df = pd.read_csv(csv_path)
+            df = pd.read_csv(csv_path, dtype={'ID': str})
             logger.info("CSV loaded successfully", rows=len(df), columns=list(df.columns))
         except Exception as e:
             logger.error("Failed to load CSV", error=str(e))
