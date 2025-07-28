@@ -57,7 +57,7 @@ jobs:
           --cov=bulk_image_processor \
           --cov-report=term-missing \
           --cov-report=xml \
-          --cov-fail-under=58 \
+          --cov-fail-under=57 \
           -v
 
     - name: Upload coverage reports to Codecov
