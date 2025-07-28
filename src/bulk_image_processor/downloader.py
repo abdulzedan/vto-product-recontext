@@ -13,14 +13,10 @@ from PIL import Image
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from .config import Settings
+from .exceptions import DownloadError, CSVParsingError, TimeoutError, ImageValidationError
 from .utils import ensure_directory, generate_unique_id, validate_image_url
 
 logger = structlog.get_logger(__name__)
-
-
-class ImageDownloadError(Exception):
-    """Exception raised when image download fails."""
-    pass
 
 
 class ImageRecord:
@@ -43,7 +39,11 @@ class ImageRecord:
         
         # Validate URL
         if not validate_image_url(self.image_url):
-            raise ValueError(f"Invalid image URL: {self.image_url}")
+            raise DownloadError(
+                f"Invalid image URL format",
+                url=self.image_url,
+                context={'record_id': self.id}
+            )
     
     def __repr__(self) -> str:
         return f"ImageRecord(id={self.id}, url={self.image_url[:50]}...)"
@@ -92,14 +92,21 @@ class ImageDownloader:
             logger.info("CSV loaded successfully", rows=len(df), columns=list(df.columns))
         except Exception as e:
             logger.error("Failed to load CSV", error=str(e))
-            raise
+            raise CSVParsingError(
+                f"Failed to load CSV file: {str(e)}",
+                csv_path=str(csv_path)
+            )
         
         # Validate required columns
         required_columns = ['ID', 'Image Src', 'Image Command', 'Image Position']
         missing_columns = [col for col in required_columns if col not in df.columns]
         
         if missing_columns:
-            raise ValueError(f"Missing required columns: {missing_columns}")
+            raise CSVParsingError(
+                f"Missing required columns in CSV",
+                csv_path=str(csv_path),
+                context={'missing_columns': missing_columns, 'found_columns': list(df.columns)}
+            )
         
         # Parse records
         records = []
@@ -175,8 +182,10 @@ class ImageDownloader:
             # Download image
             async with self.session.get(record.image_url) as response:
                 if response.status != 200:
-                    raise ImageDownloadError(
-                        f"HTTP {response.status}: {response.reason}"
+                    raise DownloadError(
+                        f"HTTP error: {response.reason}",
+                        url=record.image_url,
+                        status_code=response.status
                     )
                 
                 # Check content type
@@ -193,7 +202,11 @@ class ImageDownloader:
                 
                 # Validate image data
                 if len(image_data) == 0:
-                    raise ImageDownloadError("Empty image data")
+                    raise DownloadError(
+                        "Empty image data received",
+                        url=record.image_url,
+                        context={'record_id': record.id}
+                    )
                 
                 # Validate image with PIL
                 try:
@@ -214,7 +227,12 @@ class ImageDownloader:
                     image.save(output_path, 'JPEG', quality=95)
                     
                 except Exception as e:
-                    raise ImageDownloadError(f"Invalid image data: {str(e)}")
+                    raise ImageValidationError(
+                        f"Invalid image data: {str(e)}",
+                        file_path=str(output_path),
+                        validation_type='format',
+                        context={'record_id': record.id, 'url': record.image_url}
+                    )
                 
                 download_time = time.time() - start_time
                 file_size = len(image_data)
@@ -241,7 +259,14 @@ class ImageDownloader:
                 download_time=round(download_time, 2),
             )
             self.download_stats['failed'] += 1
-            raise ImageDownloadError(f"Failed to download {record.image_url}: {str(e)}")
+            if isinstance(e, (DownloadError, ImageValidationError)):
+                raise
+            else:
+                raise DownloadError(
+                    f"Failed to download image: {str(e)}",
+                    url=record.image_url,
+                    context={'record_id': record.id, 'error_type': type(e).__name__}
+                )
     
     async def download_images(
         self,
