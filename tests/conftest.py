@@ -11,22 +11,35 @@ from bulk_image_processor.downloader import ImageRecord
 @pytest.fixture
 def mock_settings():
     """Mock settings for testing."""
-    return Settings(
-        project_id="test-project",
-        location="us-central1",
-        model_endpoint="test-vto-endpoint",
-        model_endpoint_product="test-product-endpoint",
-        google_cloud_storage="test-bucket",
-        gemini_api_key="test-gemini-key",
-        max_workers=2,
-        max_retries=2,
-        download_timeout=10,
-        processing_timeout=30,
-        local_output_dir="./test_output",
-        enable_gcs_upload=False,
-        log_level="INFO",
-        log_format="json",
-    )
+    import os
+    # Set required environment variables for testing
+    os.environ.update({
+        'PROJECT_ID': 'test-project',
+        'GOOGLE_CLOUD_STORAGE': 'test-bucket',
+        'GEMINI_API_KEY': 'test-gemini-key'
+    })
+    
+    try:
+        return Settings(
+            project_id="test-project",
+            location="us-central1",
+            model_endpoint="test-vto-endpoint",
+            model_endpoint_product="test-product-endpoint",
+            google_cloud_storage="test-bucket",
+            gemini_api_key="test-gemini-key",
+            max_workers=2,
+            max_retries=2,
+            download_timeout=10,
+            processing_timeout=30,
+            local_output_dir="./test_output",
+            enable_gcs_upload=False,
+            log_level="INFO",
+            log_format="json",
+        )
+    finally:
+        # Clean up environment variables
+        for key in ['PROJECT_ID', 'GOOGLE_CLOUD_STORAGE', 'GEMINI_API_KEY']:
+            os.environ.pop(key, None)
 
 
 @pytest.fixture
