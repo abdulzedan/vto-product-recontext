@@ -5,6 +5,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from bulk_image_processor.downloader import ImageDownloader, ImageRecord
+from bulk_image_processor.exceptions import DownloadError, CSVParsingError, ImageValidationError
 
 
 class TestImageRecord:
@@ -28,8 +29,8 @@ class TestImageRecord:
         assert record.unique_id.startswith("img_test_001_")
     
     def test_invalid_url(self):
-        """Test that invalid URLs raise ValueError."""
-        with pytest.raises(ValueError, match="Invalid image URL"):
+        """Test that invalid URLs raise DownloadError."""
+        with pytest.raises(DownloadError, match="Invalid image URL format"):
             ImageRecord(
                 id="test_001",
                 image_url="not-a-valid-url",
@@ -62,7 +63,7 @@ class TestImageDownloader:
             f.write("ID,Image Src\n001,https://example.com/test.jpg\n")
         
         async with ImageDownloader(mock_settings) as downloader:
-            with pytest.raises(ValueError, match="Missing required columns"):
+            with pytest.raises(CSVParsingError, match="Missing required columns"):
                 downloader.load_csv(csv_path)
     
     @pytest.mark.asyncio
@@ -105,8 +106,11 @@ class TestImageDownloader:
         mock_get.return_value.__aenter__.return_value = mock_response
         
         async with ImageDownloader(mock_settings) as downloader:
-            with pytest.raises(Exception):
+            with pytest.raises(DownloadError) as exc_info:
                 await downloader.download_single_image(sample_image_record, tmp_path)
+            
+            assert "HTTP error" in str(exc_info.value)
+            assert exc_info.value.context['status_code'] == 404
     
     @pytest.mark.asyncio
     async def test_download_stats(self, mock_settings):
