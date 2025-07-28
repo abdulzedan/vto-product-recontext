@@ -447,20 +447,20 @@ class TestProgressTracker:
         assert tracker.completed_items == 0
         assert tracker.failed_items == 0
     
-    @patch('structlog.get_logger')
+    @patch('bulk_image_processor.utils.logger')
     def test_progress_tracker_update(self, mock_logger):
         """Test updating progress."""
-        logger_instance = MagicMock()
-        mock_logger.return_value = logger_instance
-        
         tracker = ProgressTracker(total_items=20)
         
-        # Update with successes
+        # Update exactly 10 items to trigger logging
         for i in range(10):
             tracker.update(success=True)
         
         assert tracker.completed_items == 10
         assert tracker.failed_items == 0
+        
+        # Verify logging was called at the 10th item
+        assert mock_logger.info.call_count == 1
         
         # Update with failures
         for i in range(5):
@@ -468,9 +468,6 @@ class TestProgressTracker:
         
         assert tracker.completed_items == 15
         assert tracker.failed_items == 5
-        
-        # Verify logging was called (it logs every 10 items)
-        assert logger_instance.info.call_count >= 1
     
     @patch('structlog.get_logger')
     def test_progress_tracker_final_stats(self, mock_logger):
