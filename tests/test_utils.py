@@ -338,7 +338,8 @@ class TestGCSOperations:
             mock_bucket.blob.assert_called_once_with("path/to/file.txt")
             mock_blob.download_to_filename.assert_called_once_with(str(local_path))
     
-    def test_download_from_gcs_invalid_uri(self, tmp_path):
+    @patch('google.cloud.storage.Client')
+    def test_download_from_gcs_invalid_uri(self, mock_client, tmp_path):
         """Test downloading with invalid GCS URI."""
         local_path = tmp_path / "test.txt"
         
