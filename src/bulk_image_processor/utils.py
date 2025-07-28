@@ -51,8 +51,11 @@ def setup_logging(level: str = "INFO", format_type: str = "json") -> None:
 
 def generate_unique_id(prefix: str = "") -> str:
     """Generate a unique identifier with timestamp."""
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]
-    return f"{prefix}_{timestamp}" if prefix else timestamp
+    import uuid
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+    unique_suffix = str(uuid.uuid4())[:8]  # Add random component for uniqueness
+    unique_id = f"{timestamp}_{unique_suffix}"
+    return f"{prefix}_{unique_id}" if prefix else unique_id
 
 
 def validate_image_url(url: str) -> bool:
@@ -60,6 +63,10 @@ def validate_image_url(url: str) -> bool:
     try:
         parsed = urlparse(url)
         if not parsed.scheme or not parsed.netloc:
+            return False
+        
+        # Only allow HTTP/HTTPS schemes
+        if parsed.scheme.lower() not in ('http', 'https'):
             return False
         
         # Check if URL ends with common image extensions
