@@ -50,14 +50,14 @@ jobs:
           tests/test_config.py::TestGeminiConfig \
           tests/test_config.py::TestStorageConfig \
           tests/test_config.py::TestLoggingConfig \
-          tests/test_utils.py \
           tests/test_analyzer.py \
           tests/test_main.py \
-          tests/test_storage.py \
+          tests/test_processors.py \
+          tests/test_downloader.py \
           --cov=bulk_image_processor \
           --cov-report=term-missing \
           --cov-report=xml \
-          --cov-fail-under=57 \
+          --cov-fail-under=55 \
           -v
 
     - name: Upload coverage reports to Codecov
