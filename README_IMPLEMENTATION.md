@@ -33,7 +33,7 @@ Input CSV → Image Download → Gemini Classification → Processing → Qualit
 
 1. **Clone and setup**:
    ```bash
-   git clone <repository-url>
+   git clone https://github.com/abdulzedan/vto-product-recontext.git
    cd vto-product-recontext
    chmod +x scripts/setup_env.sh
    ./scripts/setup_env.sh
