@@ -69,21 +69,37 @@ class BulkImageProcessor:
         signal.signal(signal.SIGTERM, signal_handler)
     
     async def process_from_csv(self, csv_path: Path) -> Dict[str, any]:
-        """Process images from CSV file."""
+        """Process images from CSV file with run tracking."""
+        from .utils import get_next_run_id, create_run_directory, create_run_manifest, generate_run_statistics
+        
         start_time = time.time()
+        
+        # Create new run directory
+        run_id = get_next_run_id()
+        run_path = create_run_directory(run_id)
+        
+        # Create manifest
+        manifest = create_run_manifest(run_id, run_path, csv_path, self.settings)
         
         logger.info(
             "Starting bulk image processing",
+            run_id=run_id,
+            run_path=str(run_path),
             csv_path=str(csv_path),
             max_workers=self.settings.processing.max_workers,
         )
         
+        # Store run info for later use
+        self.current_run_id = run_id
+        self.current_run_path = run_path
+        
         try:
             # Step 1: Download images from CSV
             logger.info("Step 1: Downloading images from CSV")
+            downloads_dir = run_path / "downloads"
             download_results = await download_images_from_csv(
                 csv_path=csv_path,
-                output_dir=Path("./downloads"),
+                output_dir=downloads_dir,
                 settings=self.settings,
             )
             
@@ -108,29 +124,57 @@ class BulkImageProcessor:
             logger.info("Step 2: Classifying images with Gemini")
             classified_images = await self._classify_images(successful_downloads)
             
-            # Step 3: Process images based on classification
+            # Step 3: Process images based on classification (using run-specific output)
             logger.info("Step 3: Processing images")
-            processing_results = await self._process_classified_images(classified_images)
+            processing_results = await self._process_classified_images(classified_images, run_path)
             
-            # Step 4: Generate summary
+            # Step 4: Generate run statistics
+            total_duration = time.time() - start_time
+            logger.info("Step 4: Generating run statistics")
+            
+            # Convert processing results to dict format for statistics
+            results_for_stats = []
+            for result in processing_results:
+                results_for_stats.append({
+                    'success': result.success,
+                    'processor_type': getattr(result, 'processor_type', 'unknown'),
+                    'quality_score': getattr(result, 'quality_score', 0.0),
+                    'processing_time': getattr(result, 'processing_time', 0.0),
+                    'error_message': getattr(result, 'error_message', ''),
+                    'attempts': getattr(result, 'retry_count', 1),
+                })
+            
+            statistics = generate_run_statistics(run_path, results_for_stats, total_duration)
+            
+            # Step 5: Generate summary (for backward compatibility)
             summary = self._create_summary(
                 start_time,
                 download_results,
                 classified_images,
                 processing_results,
             )
+            summary['run_id'] = run_id
+            summary['run_path'] = str(run_path)
+            summary['statistics'] = statistics
             
-            # Save summary
+            # Save summary in run directory
             self.storage_manager.create_processing_summary(
                 summary,
                 "bulk_processing",
             )
             
+            # Step 6: Upload entire run directory to GCS
+            if self.settings.storage.enable_gcs_upload:
+                logger.info("Step 6: Uploading complete run directory to GCS")
+                await self._upload_run_directory_to_gcs(run_path)
+            
             logger.info(
                 "Bulk processing completed",
-                total_time=round(time.time() - start_time, 2),
+                run_id=run_id,
+                total_time=round(total_duration, 2),
                 total_processed=len(processing_results),
                 successful_processed=sum(1 for r in processing_results if r.success),
+                success_rate=f"{statistics['results']['success_rate']:.1%}",
             )
             
             return summary
@@ -216,6 +260,7 @@ class BulkImageProcessor:
     async def _process_classified_images(
         self,
         classified_images: List[Tuple[ImageRecord, Path, ImageCategory]],
+        run_path: Path = None,
     ) -> List[ProcessingResult]:
         """Process classified images using appropriate processors."""
         # Separate images by category
@@ -244,33 +289,43 @@ class BulkImageProcessor:
         # Process each category
         results = []
         
+        # Use run-specific output directory or default
+        if run_path is None:
+            run_path = Path("./output")
+        
         # Process apparel images with Virtual Try-On
         if apparel_images:
             logger.info("Processing apparel images with Virtual Try-On")
+            vto_output_dir = run_path / "virtual_try_on"
             vto_results = await self._process_with_processor(
                 apparel_images,
                 self.vto_processor,
                 "virtual_try_on",
+                vto_output_dir,
             )
             results.extend(vto_results)
         
         # Process product images with Product Recontext
         if product_images:
             logger.info("Processing product images with Product Recontext")
+            product_output_dir = run_path / "product_recontext"
             product_results = await self._process_with_processor(
                 product_images,
                 self.product_processor,
                 "product_recontext",
+                product_output_dir,
             )
             results.extend(product_results)
         
         # Handle unknown images (default to Product Recontext)
         if unknown_images:
             logger.info("Processing unknown images with Product Recontext (default)")
+            unknown_output_dir = run_path / "product_recontext"
             unknown_results = await self._process_with_processor(
                 unknown_images,
                 self.product_processor,
                 "product_recontext",
+                unknown_output_dir,
             )
             results.extend(unknown_results)
         
@@ -281,9 +336,11 @@ class BulkImageProcessor:
         images: List[Tuple[ImageRecord, Path]],
         processor,
         processor_name: str,
+        output_dir: Path = None,
     ) -> List[ProcessingResult]:
         """Process images with specified processor."""
-        output_dir = self.storage_manager.get_local_output_dir(processor_name)
+        if output_dir is None:
+            output_dir = self.storage_manager.get_local_output_dir(processor_name)
         results = []
         progress = ProgressTracker(len(images))
         
@@ -379,6 +436,70 @@ class BulkImageProcessor:
         }
         
         return summary
+    
+    async def _upload_run_directory_to_gcs(self, run_path: Path) -> None:
+        """Upload entire run directory to GCS preserving the same structure."""
+        try:
+            logger.info("Starting GCS upload", run_path=str(run_path))
+            from google.cloud import storage
+            
+            storage_client = storage.Client()
+            bucket = storage_client.bucket(self.settings.google_cloud.storage_bucket)
+            logger.info("GCS client and bucket initialized", bucket_name=self.settings.google_cloud.storage_bucket)
+            
+            # Extract the relative path from 'output/' onwards
+            # run_path is like: output/2025/08/13/run_002
+            base_output_dir = Path("./output")
+            relative_run_path = run_path.relative_to(base_output_dir)
+            
+            uploaded_files = 0
+            total_size = 0
+            
+            # Walk through all files in the run directory
+            logger.info("Starting file enumeration", base_dir=str(base_output_dir))
+            for local_file_path in run_path.rglob('*'):
+                if local_file_path.is_file():
+                    # Calculate relative path from the run directory
+                    relative_file_path = local_file_path.relative_to(base_output_dir)
+                    
+                    # Create GCS path: output/2025/08/13/run_002/virtual_try_on/...
+                    gcs_path = f"output/{relative_file_path}"
+                    
+                    logger.info("Uploading file", local_path=str(local_file_path), gcs_path=gcs_path)
+                    
+                    # Upload file to GCS
+                    blob = bucket.blob(gcs_path)
+                    blob.upload_from_filename(str(local_file_path))
+                    
+                    uploaded_files += 1
+                    total_size += local_file_path.stat().st_size
+                    
+                    # Log progress every 10 files
+                    if uploaded_files % 10 == 0 or uploaded_files <= 5:
+                        logger.info(
+                            "GCS upload progress",
+                            uploaded_files=uploaded_files,
+                            current_file=str(relative_file_path),
+                            gcs_path=gcs_path,
+                        )
+            
+            # Calculate total size in MB
+            total_size_mb = total_size / (1024 * 1024)
+            
+            logger.info(
+                "Complete run directory uploaded to GCS",
+                run_path=str(run_path),
+                gcs_base_path=f"gs://{self.settings.google_cloud.storage_bucket}/output/{relative_run_path}",
+                uploaded_files=uploaded_files,
+                total_size_mb=round(total_size_mb, 2),
+            )
+            
+        except Exception as e:
+            logger.error(
+                "Failed to upload run directory to GCS",
+                run_path=str(run_path),
+                error=str(e),
+            )
     
     def get_system_status(self) -> Dict[str, any]:
         """Get current system status."""
