@@ -113,6 +113,222 @@ def prediction_to_pil_image(
     return image_pil
 
 
+def get_next_run_id(output_dir: Path = Path("./output")) -> str:
+    """Get the next available run ID by checking existing runs.
+    
+    Format: run_001, run_002, etc.
+    Only checks run_id numbers, ignores dates in folder structure.
+    """
+    if not output_dir.exists():
+        return "run_001"
+    
+    # Find all run directories across all date folders
+    run_numbers = []
+    
+    # Search through all date folders (YYYY/MM/DD structure)
+    for year_dir in output_dir.glob("????"):
+        if not year_dir.is_dir():
+            continue
+        for month_dir in year_dir.glob("??"):
+            if not month_dir.is_dir():
+                continue
+            for day_dir in month_dir.glob("??"):
+                if not day_dir.is_dir():
+                    continue
+                # Look for run directories in this date folder
+                for run_dir in day_dir.glob("run_*"):
+                    if run_dir.is_dir():
+                        run_name = run_dir.name
+                        if run_name.startswith("run_") and len(run_name) == 7:
+                            try:
+                                run_num = int(run_name[4:])
+                                run_numbers.append(run_num)
+                            except ValueError:
+                                continue
+    
+    # Also check root level for any legacy run directories
+    for run_dir in output_dir.glob("run_*"):
+        if run_dir.is_dir():
+            run_name = run_dir.name
+            if run_name.startswith("run_") and len(run_name) == 7:
+                try:
+                    run_num = int(run_name[4:])
+                    run_numbers.append(run_num)
+                except ValueError:
+                    continue
+    
+    # Get next run number
+    if not run_numbers:
+        return "run_001"
+    
+    next_run = max(run_numbers) + 1
+    return f"run_{next_run:03d}"
+
+
+def create_run_directory(run_id: str, base_output_dir: Path = Path("./output")) -> Path:
+    """Create run directory with date structure: output/YYYY/MM/DD/run_XXX/"""
+    from datetime import datetime
+    
+    now = datetime.now()
+    date_path = base_output_dir / f"{now.year:04d}" / f"{now.month:02d}" / f"{now.day:02d}"
+    run_path = date_path / run_id
+    
+    # Create the full directory structure
+    run_path.mkdir(parents=True, exist_ok=True)
+    
+    # Create symlink for latest run (for easy access)
+    latest_link = base_output_dir / "latest"
+    if latest_link.exists() or latest_link.is_symlink():
+        latest_link.unlink()
+    
+    # Create relative symlink to the run directory
+    import os
+    relative_path = os.path.relpath(run_path, base_output_dir)
+    latest_link.symlink_to(relative_path)
+    
+    return run_path
+
+
+def create_run_manifest(run_id: str, run_path: Path, csv_file: Path, settings) -> Dict[str, Any]:
+    """Create manifest file for the run."""
+    from datetime import datetime
+    
+    manifest = {
+        "run_id": run_id,
+        "timestamp": datetime.now().isoformat(),
+        "input": {
+            "csv_file": str(csv_file),
+            "csv_exists": csv_file.exists(),
+            "parameters": {
+                "max_workers": settings.processing.max_workers,
+                "max_retries": settings.processing.max_retries,
+                "project_id": settings.google_cloud.project_id,
+            }
+        },
+        "status": "started",
+        "output_path": str(run_path),
+    }
+    
+    # Save manifest
+    manifest_path = run_path / "manifest.json"
+    import json
+    with open(manifest_path, 'w') as f:
+        json.dump(manifest, f, indent=2)
+    
+    return manifest
+
+
+def generate_run_statistics(run_path: Path, processing_results: List, total_duration: float) -> Dict[str, Any]:
+    """Generate comprehensive statistics for a run."""
+    from datetime import datetime
+    from collections import defaultdict, Counter
+    
+    # Analyze results
+    success_count = sum(1 for r in processing_results if r.get('success', False))
+    failure_count = len(processing_results) - success_count
+    
+    # Group by processor type
+    by_processor = defaultdict(lambda: {
+        'processed': 0,
+        'succeeded': 0, 
+        'failed': 0,
+        'failure_reasons': Counter(),
+        'quality_scores': [],
+        'processing_times': []
+    })
+    
+    total_api_calls = 0
+    quality_scores = []
+    
+    for result in processing_results:
+        processor_type = result.get('processor_type', 'unknown')
+        stats = by_processor[processor_type]
+        
+        stats['processed'] += 1
+        
+        if result.get('success', False):
+            stats['succeeded'] += 1
+            if 'quality_score' in result:
+                score = result['quality_score']
+                stats['quality_scores'].append(score)
+                quality_scores.append(score)
+        else:
+            stats['failed'] += 1
+            # Try to extract failure reason
+            error_msg = result.get('error_message', 'unknown')
+            if 'garment_not_applied' in error_msg or 'not applied' in error_msg:
+                stats['failure_reasons']['garment_not_applied'] += 1
+            elif 'quality' in error_msg.lower():
+                stats['failure_reasons']['quality_too_low'] += 1
+            else:
+                stats['failure_reasons']['other'] += 1
+        
+        if 'processing_time' in result:
+            stats['processing_times'].append(result['processing_time'])
+        
+        # Count API calls (estimate)
+        if 'attempts' in result:
+            total_api_calls += result['attempts']
+        else:
+            total_api_calls += 1  # At least one API call
+    
+    # Calculate quality score distribution
+    score_distribution = {
+        "0.0-0.2": 0,
+        "0.2-0.4": 0, 
+        "0.4-0.6": 0,
+        "0.6-0.8": 0,
+        "0.8-1.0": 0
+    }
+    
+    for score in quality_scores:
+        if score <= 0.2:
+            score_distribution["0.0-0.2"] += 1
+        elif score <= 0.4:
+            score_distribution["0.2-0.4"] += 1
+        elif score <= 0.6:
+            score_distribution["0.4-0.6"] += 1
+        elif score <= 0.8:
+            score_distribution["0.6-0.8"] += 1
+        else:
+            score_distribution["0.8-1.0"] += 1
+    
+    # Build statistics
+    statistics = {
+        "run_id": run_path.name,
+        "timestamp": datetime.now().isoformat(),
+        "input": {
+            "total_items": len(processing_results),
+        },
+        "results": {
+            "success_count": success_count,
+            "failure_count": failure_count,
+            "success_rate": success_count / len(processing_results) if processing_results else 0.0,
+            "by_processor": dict(by_processor)
+        },
+        "performance": {
+            "total_duration": round(total_duration, 2),
+            "avg_per_item": round(total_duration / len(processing_results), 2) if processing_results else 0.0,
+            "api_calls": total_api_calls,
+            "cost_estimate_usd": round(total_api_calls * 0.02, 3)  # Rough estimate
+        },
+        "quality_metrics": {
+            "avg_score": round(sum(quality_scores) / len(quality_scores), 3) if quality_scores else 0.0,
+            "min_score": min(quality_scores) if quality_scores else 0.0,
+            "max_score": max(quality_scores) if quality_scores else 0.0,
+            "score_distribution": score_distribution
+        }
+    }
+    
+    # Save statistics
+    stats_path = run_path / "statistics.json"
+    import json
+    with open(stats_path, 'w') as f:
+        json.dump(statistics, f, indent=2)
+    
+    return statistics
+
+
 def prepare_image_for_api(image_path: Path, max_size: Tuple[int, int] = (1024, 1024)) -> str:
     """Prepare image file for API consumption."""
     with open(image_path, 'rb') as f:
