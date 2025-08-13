@@ -63,7 +63,7 @@ class VirtualTryOnProcessor(BaseProcessor):
             raise
     
     def _load_model_images(self) -> None:
-        """Load predefined model images for Virtual Try-On."""
+        """Load predefined model images for Virtual Try-On with fashion coordination."""
         models_dir = Path("image_folder/image_models")
         
         if not models_dir.exists():
@@ -85,41 +85,49 @@ class VirtualTryOnProcessor(BaseProcessor):
             self.model_images = []
             return
         
-        # Create model info for each image file based on naming convention: number_gender.jpg
+        # Create model info for each image file based on naming convention:
+        # Format: {number}_{gender}_{bottom_color}_{bottom_type}_{top_color}_{top_item}.jpg
+        # Or: {number}_{gender}_{dress_color}_dress.jpg
         self.model_images = []
         
         for model_file in sorted(model_files):
             try:
-                # Parse filename: e.g., "1_women.jpg" -> ("1", "women")
+                # Parse filename: e.g., "1_woman_black_trousers_white_shirt.jpg"
                 filename_parts = model_file.stem.split('_')
-                if len(filename_parts) != 2:
+                
+                if len(filename_parts) < 4:
                     logger.warning(
                         "Skipping model file with unexpected naming format",
                         filename=model_file.name,
-                        expected_format="number_gender.jpg",
+                        expected_format="number_gender_outfit_details.jpg",
                     )
                     continue
                 
-                model_number, gender = filename_parts
+                model_number = filename_parts[0]
+                gender = filename_parts[1]
                 
                 # Validate gender
-                if gender not in ['man', 'women']:
+                if gender not in ['man', 'woman']:
                     logger.warning(
                         "Skipping model file with invalid gender",
                         filename=model_file.name,
                         gender=gender,
-                        expected_genders=['man', 'women'],
+                        expected_genders=['man', 'woman'],
                     )
                     continue
+                
+                # Parse outfit details
+                outfit_details = self._parse_outfit_details(filename_parts[2:])
                 
                 # Create model info
                 model_info = {
                     'id': f'model_{model_number}_{gender}',
-                    'description': f'Professional {gender} model {model_number}',
+                    'description': f'Professional {gender} model {model_number} wearing {outfit_details["description"]}',
                     'path': model_file,
                     'gender': gender,
                     'number': model_number,
                     'filename': model_file.name,
+                    'outfit': outfit_details,
                 }
                 self.model_images.append(model_info)
                 
@@ -133,30 +141,152 @@ class VirtualTryOnProcessor(BaseProcessor):
         
         # Group models by gender for easy access
         self.models_by_gender = {
-            'women': [m for m in self.model_images if m['gender'] == 'women'],
+            'woman': [m for m in self.model_images if m['gender'] == 'woman'],
             'man': [m for m in self.model_images if m['gender'] == 'man'],
         }
         
+        # Also create lookup by outfit characteristics for fashion coordination
+        self.models_by_outfit = {}
+        for model in self.model_images:
+            outfit = model['outfit']
+            gender = model['gender']
+            
+            # Create keys for different outfit characteristics
+            keys = [
+                f"{gender}_{outfit.get('bottom_color', 'unknown')}_bottoms",
+                f"{gender}_{outfit.get('top_color', 'unknown')}_tops",
+                f"{gender}_{outfit.get('style', 'unknown')}_style",
+            ]
+            
+            for key in keys:
+                if key not in self.models_by_outfit:
+                    self.models_by_outfit[key] = []
+                self.models_by_outfit[key].append(model)
+        
         logger.info(
-            "Model images loaded",
+            "Model images loaded with fashion coordination",
             total_count=len(self.model_images),
-            women_models=len(self.models_by_gender['women']),
+            woman_models=len(self.models_by_gender['woman']),
             man_models=len(self.models_by_gender['man']),
             models=[m['filename'] for m in self.model_images],
+            outfit_categories=len(self.models_by_outfit),
         )
+    
+    def _parse_outfit_details(self, parts: List[str]) -> Dict[str, Any]:
+        """Parse outfit details from filename parts.
+        
+        Examples:
+        - ['black', 'trousers', 'white', 'shirt'] -> black trousers, white shirt
+        - ['grey', 'dress'] -> grey dress
+        - ['blue', 'jeans', 'white', 'tshirt'] -> blue jeans, white t-shirt
+        """
+        if len(parts) == 2 and parts[1] == 'dress':
+            # Handle dress format: color_dress
+            return {
+                'type': 'dress',
+                'dress_color': parts[0],
+                'style': 'dress',
+                'description': f'{parts[0]} dress',
+                'bottom_color': parts[0],
+                'bottom_type': 'dress',
+                'top_color': parts[0],
+                'top_type': 'dress',
+            }
+        elif len(parts) >= 4:
+            # Handle full outfit format: bottom_color_bottom_type_top_color_top_item
+            return {
+                'type': 'separate_pieces',
+                'bottom_color': parts[0],
+                'bottom_type': parts[1],
+                'top_color': parts[2], 
+                'top_type': parts[3],
+                'style': f'{parts[1]}_{parts[3]}',
+                'description': f'{parts[0]} {parts[1]}, {parts[2]} {parts[3]}',
+            }
+        else:
+            # Fallback for unexpected formats
+            return {
+                'type': 'unknown',
+                'style': 'casual',
+                'description': ' '.join(parts),
+                'bottom_color': 'neutral',
+                'bottom_type': 'unknown',
+                'top_color': 'neutral', 
+                'top_type': 'unknown',
+            }
     
     def get_processor_type(self) -> str:
         """Get processor type name."""
         return "virtual_try_on"
     
-    def select_model(self, apparel_info: Dict[str, Any]) -> Dict[str, Any]:
-        """Select appropriate model based on apparel characteristics and gender."""
+    async def select_model_with_fashion_coordination(
+        self, 
+        apparel_info: Dict[str, Any], 
+        apparel_image_path: Path,
+        exclude_models: List[str] = None
+    ) -> Dict[str, Any]:
+        """Select model using Gemini-powered fashion coordination."""
+        try:
+            # Get fashion coordination recommendation from Gemini
+            recommendation = await self.analyzer.recommend_fashion_coordination(
+                apparel_image_path, apparel_info, self.model_images, exclude_models
+            )
+            
+            # Find the recommended model
+            recommended_model = None
+            for model in self.model_images:
+                if model['id'] == recommendation['recommended_model_id']:
+                    recommended_model = model
+                    break
+            
+            if recommended_model:
+                # Add fashion reasoning to model for metadata
+                recommended_model['fashion_reasoning'] = {
+                    'reasoning': recommendation['reasoning'],
+                    'coordination_score': recommendation.get('coordination_score', 0),
+                    'color_analysis': recommendation.get('color_analysis', ''),
+                    'style_analysis': recommendation.get('style_analysis', ''),
+                    'fashion_tips': recommendation.get('fashion_tips', ''),
+                }
+                
+                logger.info(
+                    "Model selected with fashion coordination",
+                    model_id=recommended_model['id'],
+                    reasoning=recommendation['reasoning'],
+                    coordination_score=recommendation.get('coordination_score', 0),
+                )
+                return recommended_model
+            else:
+                logger.warning(
+                    "Recommended model not found, falling back to legacy selection",
+                    recommended_id=recommendation['recommended_model_id'],
+                )
+                # Fallback to legacy selection
+                return self.select_model(apparel_info, exclude_models)
+                
+        except Exception as e:
+            logger.warning(
+                "Fashion coordination failed, falling back to legacy selection",
+                error=str(e),
+            )
+            # Fallback to legacy selection
+            return self.select_model(apparel_info, exclude_models)
+    
+    def select_model(self, apparel_info: Dict[str, Any], exclude_models: List[str] = None) -> Dict[str, Any]:
+        """Select appropriate model based on apparel characteristics and gender (legacy method).
+        
+        Args:
+            apparel_info: Information about the apparel item
+            exclude_models: List of model IDs to exclude from selection (for retries)
+        """
         detected_items = apparel_info.get('detected_items', [])
         target_gender = apparel_info.get('target_gender')
+        exclude_models = exclude_models or []
         
         # First try to use the gender detected by Gemini
         if target_gender and target_gender in self.models_by_gender:
-            suitable_models = self.models_by_gender[target_gender]
+            suitable_models = [m for m in self.models_by_gender[target_gender] 
+                             if m['id'] not in exclude_models]
             if suitable_models:
                 selected_model = random.choice(suitable_models)
                 logger.info(
@@ -164,12 +294,13 @@ class VirtualTryOnProcessor(BaseProcessor):
                     model_id=selected_model['id'],
                     gender=target_gender,
                     detected_items=detected_items,
+                    excluded_count=len(exclude_models),
                 )
                 return selected_model
         
         # Fallback to heuristic-based selection if gender detection failed
         if any(item.lower() in ['dress', 'blouse', 'skirt', 'heels'] for item in detected_items):
-            preferred_gender = 'women'
+            preferred_gender = 'woman'
         elif any(item.lower() in ['suit', 'tie', 'shirt'] for item in detected_items):
             preferred_gender = 'man'
         else:
@@ -178,7 +309,8 @@ class VirtualTryOnProcessor(BaseProcessor):
         
         # Try to select from preferred gender
         if preferred_gender and preferred_gender in self.models_by_gender:
-            suitable_models = self.models_by_gender[preferred_gender]
+            suitable_models = [m for m in self.models_by_gender[preferred_gender]
+                             if m['id'] not in exclude_models]
             if suitable_models:
                 selected_model = random.choice(suitable_models)
                 logger.info(
@@ -186,23 +318,27 @@ class VirtualTryOnProcessor(BaseProcessor):
                     model_id=selected_model['id'],
                     gender=preferred_gender,
                     detected_items=detected_items,
+                    excluded_count=len(exclude_models),
                 )
                 return selected_model
         
-        # Final fallback to any available model
-        if self.model_images:
-            selected_model = random.choice(self.model_images)
-            logger.info(
-                "Model selected (fallback)",
-                model_id=selected_model['id'],
-                gender=selected_model.get('gender', 'unknown'),
-                detected_items=detected_items,
-            )
-            return selected_model
+        # CRITICAL: Do NOT fallback to different gender models
+        # If we can't find a model of the correct gender, fail the selection
+        # This maintains gender consistency across retries
         
-        # This should never happen if models are loaded properly
-        logger.error("No models available for selection")
-        raise ValueError("No models available for selection")
+        logger.error(
+            "No more models available for selection while maintaining gender consistency", 
+            target_gender=target_gender,
+            excluded_models=exclude_models,
+            available_genders=list(self.models_by_gender.keys()),
+            total_models_per_gender={g: len(models) for g, models in self.models_by_gender.items()},
+        )
+        
+        raise ValueError(
+            f"All models of gender '{target_gender}' have been tried. "
+            f"Excluded: {exclude_models}. "
+            f"Gender consistency maintained - will not try different gender models."
+        )
     
     def prepare_model_image(self, model_info: Dict[str, Any]) -> str:
         """Prepare model image for API call."""
@@ -308,7 +444,221 @@ class VirtualTryOnProcessor(BaseProcessor):
         image_path: Path,
         output_dir: Path,
     ) -> ProcessingResult:
-        """Process a single image for Virtual Try-On."""
+        """Process a single image for Virtual Try-On with API retry and model retry logic."""
+        # Create a single output directory for this record that will be reused across retries
+        record_output_dir = self.create_output_directory(output_dir, record)
+        
+        # Track which models we've already tried and retry counts per model
+        tried_models = []
+        model_retry_counts = {}
+        max_api_retries_per_model = 2  # Retry same model up to 2 times for API issues
+        max_model_attempts = min(len(self.model_images), 3)  # Try up to 3 different models
+        
+        total_attempts = 0
+        max_total_attempts = max_model_attempts * (max_api_retries_per_model + 1)
+        
+        while total_attempts < max_total_attempts:
+            total_attempts += 1
+            
+            result = await self._process_with_model(
+                record, image_path, record_output_dir, tried_models
+            )
+            
+            # Check if garment was successfully applied
+            if result.success and hasattr(result, 'metadata') and result.metadata:
+                quality_feedback = result.metadata.get('quality_feedback')
+                current_model = result.metadata.get('selected_model', {}).get('id', 'unknown')
+                
+                if quality_feedback and hasattr(quality_feedback, 'garment_applied'):
+                    if not quality_feedback.garment_applied:
+                        # Garment not applied - could be API issue, try same model again first
+                        retry_count = model_retry_counts.get(current_model, 0)
+                        
+                        if retry_count < max_api_retries_per_model:
+                            # Retry same model (API might have failed)
+                            model_retry_counts[current_model] = retry_count + 1
+                            
+                            # Save failed attempt IMAGE and metadata
+                            failed_attempt_file = record_output_dir / f"failed_attempt_{total_attempts}.json"
+                            failed_attempt_image = record_output_dir / f"failed_attempt_{total_attempts}.jpg"
+                            
+                            # Save the failed result image
+                            if hasattr(result, '_temp_result_data'):
+                                temp_data = result._temp_result_data
+                                failed_image = temp_data['result_image']
+                                failed_image.save(failed_attempt_image, 'JPEG', quality=95)
+                            
+                            failed_attempt_data = {
+                                'total_attempt': total_attempts,
+                                'retry_attempt': retry_count + 1,
+                                'model_used': current_model,
+                                'quality_feedback': str(quality_feedback),
+                                'quality_score': getattr(result, 'quality_score', 0.0),
+                                'failure_reason': 'garment_not_applied',
+                                'gemini_interpretation': quality_feedback.reasoning if hasattr(quality_feedback, 'reasoning') else 'No reasoning provided',
+                                'failed_image': str(failed_attempt_image) if failed_attempt_image.exists() else None,
+                            }
+                            
+                            import json
+                            with open(failed_attempt_file, 'w') as f:
+                                json.dump(failed_attempt_data, f, indent=2, default=str)
+                            
+                            logger.warning(
+                                "Garment not applied - retrying same model (API issue)",
+                                record_id=record.id,
+                                model_id=current_model,
+                                retry_attempt=retry_count + 1,
+                                max_api_retries=max_api_retries_per_model,
+                                total_attempt=total_attempts,
+                                failure_saved=str(failed_attempt_file),
+                                failed_image_saved=str(failed_attempt_image),
+                            )
+                            
+                            # Continue to retry same model
+                            continue
+                        else:
+                            # Exhausted retries for this model, switch to different model
+                            tried_models.append(current_model)
+                            
+                            # Exhausted retries for this model, switch to different model
+                            tried_models.append(current_model)
+                            
+                            # Save the final failed attempt for this model
+                            failed_attempt_file = record_output_dir / f"failed_attempt_{total_attempts}.json"
+                            failed_attempt_image = record_output_dir / f"failed_attempt_{total_attempts}.jpg"
+                            
+                            # Save the failed result image
+                            if hasattr(result, '_temp_result_data'):
+                                temp_data = result._temp_result_data
+                                failed_image = temp_data['result_image']
+                                failed_image.save(failed_attempt_image, 'JPEG', quality=95)
+                            
+                            failed_attempt_data = {
+                                'total_attempt': total_attempts,
+                                'model_used': current_model,
+                                'api_retries_exhausted': retry_count + 1,
+                                'quality_feedback': str(quality_feedback),
+                                'quality_score': getattr(result, 'quality_score', 0.0),
+                                'failure_reason': 'garment_not_applied_switching_model',
+                                'gemini_interpretation': quality_feedback.reasoning if hasattr(quality_feedback, 'reasoning') else 'No reasoning provided',
+                                'failed_image': str(failed_attempt_image) if failed_attempt_image.exists() else None,
+                            }
+                            
+                            import json
+                            with open(failed_attempt_file, 'w') as f:
+                                json.dump(failed_attempt_data, f, indent=2, default=str)
+                            
+                            logger.warning(
+                                "Garment not applied after all retries, switching to different model",
+                                record_id=record.id,
+                                failed_model=current_model,
+                                api_retries=retry_count + 1,
+                                switching_to_new_model=True,
+                                failure_details_saved=str(failed_attempt_file),
+                                failed_image_saved=str(failed_attempt_image),
+                            )
+                            
+                            # Continue with new model
+                            continue
+                    
+                    # If garment was applied (regardless of quality score), accept as final result
+                    # Save the successful result
+                    if hasattr(result, '_temp_result_data'):
+                        await self._save_successful_result(result, record, image_path)
+                    
+                    logger.info(
+                        "Garment successfully applied, accepting result",
+                        record_id=record.id,
+                        model_id=current_model,
+                        quality_score=quality_feedback.score,
+                        total_attempts=total_attempts,
+                    )
+                    
+                    return result
+            
+            # If we get here, either success or non-retry failure
+            if result.success and hasattr(result, '_temp_result_data'):
+                await self._save_successful_result(result, record, image_path)
+            
+            return result
+        
+        # Exhausted all model attempts
+        return ProcessingResult(
+            record_id=record.id,
+            success=False,
+            error_message=f"Failed after trying {len(tried_models)} different models with retries",
+        )
+    
+    async def _save_successful_result(self, result: ProcessingResult, record: ImageRecord, image_path: Path) -> None:
+        """Save the successful result files and upload to GCS."""
+        temp_data = result._temp_result_data
+        result_image = temp_data['result_image']
+        result_path = temp_data['result_path']
+        model_copy_path = temp_data['model_copy_path']
+        selected_model = temp_data['selected_model']
+        
+        try:
+            # Save final result image
+            result_image.save(result_path, 'JPEG', quality=95)
+            
+            # Save copy of selected model image for reference
+            try:
+                model_image = Image.open(selected_model['path'])
+                model_image.save(model_copy_path, 'JPEG', quality=95)
+            except Exception as e:
+                logger.warning(
+                    "Failed to save model image copy",
+                    record_id=record.id,
+                    model_id=selected_model['id'],
+                    error=str(e),
+                )
+            
+            # Save metadata
+            metadata_path = result_path.parent / "metadata.json"
+            import json
+            with open(metadata_path, 'w') as f:
+                json.dump(result.metadata, f, indent=2, default=str)
+            
+            # Upload to GCS if enabled
+            gcs_path = None
+            if self.settings.storage.enable_gcs_upload:
+                gcs_path = await self._upload_to_gcs(
+                    result_path,
+                    metadata_path,
+                    model_copy_path,
+                    record,
+                    image_path,
+                    selected_model,
+                )
+            
+            # Update result with final paths
+            result.output_path = result_path
+            result.gcs_path = gcs_path
+            
+            logger.info(
+                "Final result saved successfully",
+                record_id=record.id,
+                result_path=str(result_path),
+                quality_score=result.quality_score,
+            )
+            
+        except Exception as e:
+            logger.error(
+                "Failed to save successful result",
+                record_id=record.id,
+                error=str(e),
+            )
+            result.success = False
+            result.error_message = f"Failed to save result: {str(e)}"
+    
+    async def _process_with_model(
+        self,
+        record: ImageRecord,
+        image_path: Path,
+        record_output_dir: Path,  # Now receiving the pre-created directory
+        exclude_models: List[str] = None,
+    ) -> ProcessingResult:
+        """Process a single image with a specific model selection."""
         try:
             # Validate input image
             if not self.validate_image(image_path):
@@ -318,8 +668,7 @@ class VirtualTryOnProcessor(BaseProcessor):
                     error_message="Invalid input image",
                 )
             
-            # Create output directory for this record
-            record_output_dir = self.create_output_directory(output_dir, record)
+            # Use the provided output directory (created once in parent method)
             
             # Prepare apparel image
             apparel_image_bytes = self._prepare_apparel_image(image_path)
@@ -335,7 +684,10 @@ class VirtualTryOnProcessor(BaseProcessor):
                 'reasoning': apparel_analysis.reasoning,
                 'metadata': apparel_analysis.metadata,
             }
-            selected_model = self.select_model(apparel_info)
+            # Use fashion coordination for model selection
+            selected_model = await self.select_model_with_fashion_coordination(
+                apparel_info, image_path, exclude_models=exclude_models
+            )
             
             # Prepare model image
             model_image_bytes = self.prepare_model_image(selected_model)
@@ -371,22 +723,8 @@ class VirtualTryOnProcessor(BaseProcessor):
             # Convert prediction to image
             result_image = prediction_to_pil_image(predictions[0])
             
-            # Save result image
-            result_path = record_output_dir / "result.jpg"
-            result_image.save(result_path, 'JPEG', quality=95)
-            
-            # Save copy of selected model image for reference
-            model_copy_path = record_output_dir / "selected_model.jpg"
-            try:
-                model_image = Image.open(selected_model['path'])
-                model_image.save(model_copy_path, 'JPEG', quality=95)
-            except Exception as e:
-                logger.warning(
-                    "Failed to save model image copy",
-                    record_id=record.id,
-                    model_id=selected_model['id'],
-                    error=str(e),
-                )
+            # Don't save final result image yet - wait for retry logic
+            # But store it temporarily for potential saving
             
             # Analyze quality using Gemini
             quality_feedback = None
@@ -418,42 +756,39 @@ class VirtualTryOnProcessor(BaseProcessor):
                     error=str(e),
                 )
             
-            # Prepare metadata
-            metadata = self.prepare_metadata(record, {
+            # Only save result if it's successful (will be saved later after retry logic)
+            # For now, just store the result_image and paths for potential saving
+            temp_result_data = {
+                'result_image': result_image,
+                'result_path': record_output_dir / "result.jpg",
+                'model_copy_path': record_output_dir / "selected_model.jpg",
+                'selected_model': selected_model,
+            }
+            
+            # Prepare result for return (but don't save files yet)
+            temp_metadata = self.prepare_metadata(record, {
                 'apparel_analysis': apparel_analysis.dict(),
                 'selected_model': selected_model,
                 'api_response_time': time.time(),
                 'quality_score': quality_score,
                 'quality_feedback': quality_feedback,
+                'fashion_coordination': getattr(selected_model, 'fashion_reasoning', None),
             })
             
-            # Save metadata
-            metadata_path = record_output_dir / "metadata.json"
-            import json
-            with open(metadata_path, 'w') as f:
-                json.dump(metadata, f, indent=2, default=str)
-            
-            # Upload to GCS if enabled
-            gcs_path = None
-            if self.settings.storage.enable_gcs_upload:
-                gcs_path = await self._upload_to_gcs(
-                    result_path,
-                    metadata_path,
-                    model_copy_path,
-                    record,
-                    image_path,
-                    selected_model,
-                )
-            
-            return ProcessingResult(
+            # Return result with temp data for retry logic processing
+            result = ProcessingResult(
                 record_id=record.id,
                 success=True,
-                output_path=result_path,
-                gcs_path=gcs_path,
-                metadata=metadata,
+                output_path=None,  # Will be set after retry logic
+                gcs_path=None,     # Will be set after retry logic
+                metadata=temp_metadata,
                 quality_score=quality_score,
                 feedback=str(quality_feedback) if quality_feedback else None,
             )
+            
+            # Store temp result data for saving later
+            result._temp_result_data = temp_result_data
+            return result
             
         except Exception as e:
             logger.error(
