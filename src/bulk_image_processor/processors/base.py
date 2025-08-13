@@ -63,8 +63,8 @@ class BaseProcessor(ABC):
         pass
     
     def create_output_directory(self, base_dir: Path, record: ImageRecord) -> Path:
-        """Create a unique output directory for the record."""
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        """Create a unique output directory for the record with microseconds to prevent race conditions."""
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
         dir_name = f"{timestamp}_{record.id}"
         output_dir = base_dir / dir_name
         ensure_directory(output_dir)
