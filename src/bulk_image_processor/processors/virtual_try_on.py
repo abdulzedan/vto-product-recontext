@@ -520,9 +520,6 @@ class VirtualTryOnProcessor(BaseProcessor):
                             # Exhausted retries for this model, switch to different model
                             tried_models.append(current_model)
                             
-                            # Exhausted retries for this model, switch to different model
-                            tried_models.append(current_model)
-                            
                             # Save the final failed attempt for this model
                             failed_attempt_file = record_output_dir / f"failed_attempt_{total_attempts}.json"
                             failed_attempt_image = record_output_dir / f"failed_attempt_{total_attempts}.jpg"
