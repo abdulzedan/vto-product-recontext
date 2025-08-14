@@ -101,17 +101,13 @@ class GeminiAnalyzer:
             # Create classification prompt
             prompt = self._create_classification_prompt(additional_context)
             
-            # Generate response
-            loop = asyncio.get_event_loop()
-            response = await loop.run_in_executor(
-                None,
-                lambda: self.client.generate_content(
-                    [prompt, image],
-                    generation_config=genai.types.GenerationConfig(
-                        temperature=self.settings.gemini.temperature,
-                        max_output_tokens=self.settings.gemini.max_output_tokens,
-                    ),
-                )
+            # Generate response using native async
+            response = await self.client.generate_content_async(
+                [prompt, image],
+                generation_config=genai.types.GenerationConfig(
+                    temperature=self.settings.gemini.temperature,
+                    max_output_tokens=self.settings.gemini.max_output_tokens,
+                ),
             )
             
             # Parse response
@@ -251,17 +247,13 @@ class GeminiAnalyzer:
             # Create feedback prompt with apparel context
             prompt = self._create_vto_feedback_prompt(apparel_description)
             
-            # Generate response
-            loop = asyncio.get_event_loop()
-            response = await loop.run_in_executor(
-                None,
-                lambda: self.client.generate_content(
-                    [prompt, result_image, original_apparel, model_image],
-                    generation_config=genai.types.GenerationConfig(
-                        temperature=self.settings.gemini.temperature,
-                        max_output_tokens=self.settings.gemini.max_output_tokens,
-                    ),
-                )
+            # Generate response using native async
+            response = await self.client.generate_content_async(
+                [prompt, result_image, original_apparel, model_image],
+                generation_config=genai.types.GenerationConfig(
+                    temperature=self.settings.gemini.temperature,
+                    max_output_tokens=self.settings.gemini.max_output_tokens,
+                ),
             )
             
             # Parse response
@@ -307,15 +299,12 @@ class GeminiAnalyzer:
             Format: Return a single descriptive sentence.
             """
             
-            response = await asyncio.get_event_loop().run_in_executor(
-                None,
-                lambda: self.client.generate_content(
-                    [prompt, apparel_image],
-                    generation_config=genai.types.GenerationConfig(
-                        temperature=0.1,
-                        max_output_tokens=256,
-                    ),
-                )
+            response = await self.client.generate_content_async(
+                [prompt, apparel_image],
+                generation_config=genai.types.GenerationConfig(
+                    temperature=0.1,
+                    max_output_tokens=256,
+                ),
             )
             
             description = response.text.strip()
@@ -410,17 +399,13 @@ class GeminiAnalyzer:
             # Create feedback prompt
             prompt = self._create_product_recontext_feedback_prompt(generated_prompt)
             
-            # Generate response
-            loop = asyncio.get_event_loop()
-            response = await loop.run_in_executor(
-                None,
-                lambda: self.client.generate_content(
-                    [prompt, result_image, original_product],
-                    generation_config=genai.types.GenerationConfig(
-                        temperature=self.settings.gemini.temperature,
-                        max_output_tokens=self.settings.gemini.max_output_tokens,
-                    ),
-                )
+            # Generate response using native async
+            response = await self.client.generate_content_async(
+                [prompt, result_image, original_product],
+                generation_config=genai.types.GenerationConfig(
+                    temperature=self.settings.gemini.temperature,
+                    max_output_tokens=self.settings.gemini.max_output_tokens,
+                ),
             )
             
             # Parse response
@@ -543,17 +528,13 @@ class GeminiAnalyzer:
             # Create prompt generation prompt
             prompt = self._create_prompt_generation_prompt(product_description)
             
-            # Generate response
-            loop = asyncio.get_event_loop()
-            response = await loop.run_in_executor(
-                None,
-                lambda: self.client.generate_content(
-                    [prompt, product_image],
-                    generation_config=genai.types.GenerationConfig(
-                        temperature=0.3,  # Lower temperature for more consistent prompts
-                        max_output_tokens=512,
-                    ),
-                )
+            # Generate response using native async
+            response = await self.client.generate_content_async(
+                [prompt, product_image],
+                generation_config=genai.types.GenerationConfig(
+                    temperature=0.3,  # Lower temperature for more consistent prompts
+                    max_output_tokens=512,
+                ),
             )
             
             # Extract and clean the generated prompt
@@ -653,17 +634,13 @@ class GeminiAnalyzer:
             # Create fashion coordination prompt
             prompt = self._create_fashion_coordination_prompt(apparel_info, suitable_models)
             
-            # Generate response
-            loop = asyncio.get_event_loop()
-            response = await loop.run_in_executor(
-                None,
-                lambda: self.client.generate_content(
-                    [prompt, apparel_image],
-                    generation_config=genai.types.GenerationConfig(
-                        temperature=0.2,  # Lower temperature for more consistent recommendations
-                        max_output_tokens=1024,
-                    ),
-                )
+            # Generate response using native async
+            response = await self.client.generate_content_async(
+                [prompt, apparel_image],
+                generation_config=genai.types.GenerationConfig(
+                    temperature=0.2,  # Lower temperature for more consistent recommendations
+                    max_output_tokens=1024,
+                ),
             )
             
             # Parse response
