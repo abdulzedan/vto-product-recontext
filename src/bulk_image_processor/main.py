@@ -188,7 +188,6 @@ class BulkImageProcessor:
         download_results: List[Tuple[ImageRecord, Path]],
     ) -> List[Tuple[ImageRecord, Path, ImageCategory]]:
         """Classify images using Gemini analyzer."""
-        classified_images = []
         progress = ProgressTracker(len(download_results))
         
         # Use asyncio semaphore for concurrent classification tasks
@@ -196,8 +195,13 @@ class BulkImageProcessor:
         
         async def classify_with_semaphore(record: ImageRecord, path: Path) -> Tuple[ImageRecord, Path, ImageCategory]:
             async with semaphore:
+                if self.shutdown_requested:
+                    logger.info("Shutdown requested, skipping classification")
+                    return (record, path, ImageCategory.UNKNOWN)
+                
                 try:
                     category = await self._classify_single_image(record, path)
+                    progress.update(success=True)
                     return (record, path, category)
                 except Exception as e:
                     logger.error(
@@ -205,6 +209,7 @@ class BulkImageProcessor:
                         record_id=record.id,
                         error=str(e),
                     )
+                    progress.update(success=False)
                     # Default to unknown category on failure
                     return (record, path, ImageCategory.UNKNOWN)
         
@@ -214,20 +219,12 @@ class BulkImageProcessor:
             for record, path in download_results
         ]
         
-        # Process completed tasks
-        for task in asyncio.as_completed(tasks):
-            if self.shutdown_requested:
-                logger.info("Shutdown requested, stopping classification")
-                break
-            
-            try:
-                record, path, category = await task
-                classified_images.append((record, path, category))
-                progress.update(success=True)
-                
-            except Exception as e:
-                logger.error("Classification task failed", error=str(e))
-                progress.update(success=False)
+        # Use asyncio.gather for true parallel processing
+        logger.info(f"Starting parallel classification of {len(tasks)} images")
+        results = await asyncio.gather(*tasks, return_exceptions=False)
+        
+        # Filter out any None results
+        classified_images = [r for r in results if r is not None]
         
         progress.log_progress()
         return classified_images
@@ -341,7 +338,6 @@ class BulkImageProcessor:
         """Process images with specified processor."""
         if output_dir is None:
             output_dir = self.storage_manager.get_local_output_dir(processor_name)
-        results = []
         progress = ProgressTracker(len(images))
         
         # Create semaphore to limit concurrent processing
@@ -349,28 +345,35 @@ class BulkImageProcessor:
         
         async def process_with_semaphore(record: ImageRecord, path: Path) -> ProcessingResult:
             async with semaphore:
-                return await processor.process_with_retry(record, path, output_dir)
+                if self.shutdown_requested:
+                    logger.info("Shutdown requested, skipping processing")
+                    return ProcessingResult(
+                        record_id=record.id,
+                        success=False,
+                        error_message="Shutdown requested",
+                    )
+                
+                try:
+                    result = await processor.process_with_retry(record, path, output_dir)
+                    progress.update(success=result.success)
+                    return result
+                except Exception as e:
+                    logger.error("Processing task failed", record_id=record.id, error=str(e))
+                    progress.update(success=False)
+                    return ProcessingResult(
+                        record_id=record.id,
+                        success=False,
+                        error_message=str(e),
+                    )
         
-        # Process images concurrently
+        # Process images concurrently using gather
         tasks = [
             process_with_semaphore(record, path)
             for record, path in images
         ]
         
-        # Wait for all tasks to complete
-        for task in asyncio.as_completed(tasks):
-            if self.shutdown_requested:
-                logger.info("Shutdown requested, stopping processing")
-                break
-            
-            try:
-                result = await task
-                results.append(result)
-                progress.update(success=result.success)
-                
-            except Exception as e:
-                logger.error("Processing task failed", error=str(e))
-                progress.update(success=False)
+        logger.info(f"Starting parallel processing of {len(tasks)} images with {processor_name}")
+        results = await asyncio.gather(*tasks, return_exceptions=False)
         
         progress.log_progress()
         processor.log_processing_summary()
@@ -452,10 +455,10 @@ class BulkImageProcessor:
             base_output_dir = Path("./output")
             relative_run_path = run_path.relative_to(base_output_dir)
             
-            uploaded_files = 0
+            # Collect all files to upload
+            files_to_upload = []
             total_size = 0
             
-            # Walk through all files in the run directory
             logger.info("Starting file enumeration", base_dir=str(base_output_dir))
             for local_file_path in run_path.rglob('*'):
                 if local_file_path.is_file():
@@ -465,23 +468,42 @@ class BulkImageProcessor:
                     # Create GCS path: output/2025/08/13/run_002/virtual_try_on/...
                     gcs_path = f"output/{relative_file_path}"
                     
-                    logger.info("Uploading file", local_path=str(local_file_path), gcs_path=gcs_path)
-                    
-                    # Upload file to GCS
-                    blob = bucket.blob(gcs_path)
-                    blob.upload_from_filename(str(local_file_path))
-                    
-                    uploaded_files += 1
+                    files_to_upload.append((local_file_path, gcs_path))
                     total_size += local_file_path.stat().st_size
-                    
-                    # Log progress every 10 files
-                    if uploaded_files % 10 == 0 or uploaded_files <= 5:
-                        logger.info(
-                            "GCS upload progress",
-                            uploaded_files=uploaded_files,
-                            current_file=str(relative_file_path),
-                            gcs_path=gcs_path,
+            
+            logger.info(f"Found {len(files_to_upload)} files to upload, total size: {total_size / (1024*1024):.2f} MB")
+            
+            # Create upload function for concurrent uploads
+            async def upload_file_async(local_path: Path, gcs_path: str, semaphore: asyncio.Semaphore) -> bool:
+                async with semaphore:
+                    try:
+                        # Run blocking upload in executor
+                        loop = asyncio.get_event_loop()
+                        await loop.run_in_executor(
+                            None,
+                            lambda: bucket.blob(gcs_path).upload_from_filename(str(local_path))
                         )
+                        return True
+                    except Exception as e:
+                        logger.error(f"Failed to upload {local_path} to {gcs_path}: {e}")
+                        return False
+            
+            # Use semaphore to limit concurrent uploads (avoid overwhelming GCS)
+            semaphore = asyncio.Semaphore(min(10, self.settings.processing.max_workers))
+            
+            # Create upload tasks
+            upload_tasks = [
+                upload_file_async(local_path, gcs_path, semaphore)
+                for local_path, gcs_path in files_to_upload
+            ]
+            
+            # Execute all uploads concurrently
+            logger.info(f"Starting concurrent upload of {len(upload_tasks)} files")
+            results = await asyncio.gather(*upload_tasks, return_exceptions=False)
+            
+            # Count successful uploads
+            uploaded_files = sum(1 for r in results if r)
+            failed_files = len(results) - uploaded_files
             
             # Calculate total size in MB
             total_size_mb = total_size / (1024 * 1024)
@@ -491,6 +513,7 @@ class BulkImageProcessor:
                 run_path=str(run_path),
                 gcs_base_path=f"gs://{self.settings.google_cloud.storage_bucket}/output/{relative_run_path}",
                 uploaded_files=uploaded_files,
+                failed_files=failed_files,
                 total_size_mb=round(total_size_mb, 2),
             )
             
