@@ -161,6 +161,7 @@ class BulkImageProcessor:
             self.storage_manager.create_processing_summary(
                 summary,
                 "bulk_processing",
+                run_path,
             )
             
             # Step 6: Upload entire run directory to GCS

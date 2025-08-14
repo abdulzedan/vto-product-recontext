@@ -26,10 +26,9 @@ class StorageManager:
     
     def _setup_storage(self) -> None:
         """Initialize storage clients."""
-        # Setup local storage
+        # Setup local storage - only create the base output directory
+        # Processor-specific directories are created on-demand with timestamped structure
         ensure_directory(self.settings.storage.local_output_dir)
-        ensure_directory(self.settings.storage.local_output_dir / "virtual_try_on")
-        ensure_directory(self.settings.storage.local_output_dir / "product_recontext")
         
         # Setup GCS if enabled
         if self.settings.storage.enable_gcs_upload:
@@ -212,15 +211,19 @@ class StorageManager:
         self,
         summary_data: Dict[str, Any],
         processor_type: str,
+        output_dir: Optional[Path] = None,
     ) -> Path:
         """Create processing summary file."""
         timestamp = time.strftime("%Y%m%d_%H%M%S")
         summary_filename = f"{processor_type}_summary_{timestamp}.json"
         
-        # Save locally
-        local_summary_dir = Path("./logs")
-        ensure_directory(local_summary_dir)
-        local_summary_path = local_summary_dir / summary_filename
+        # Save in the run directory if provided, otherwise use logs directory
+        if output_dir:
+            local_summary_path = output_dir / summary_filename
+        else:
+            local_summary_dir = Path("./logs")
+            ensure_directory(local_summary_dir)
+            local_summary_path = local_summary_dir / summary_filename
         
         with open(local_summary_path, 'w') as f:
             json.dump(summary_data, f, indent=2, default=str)
