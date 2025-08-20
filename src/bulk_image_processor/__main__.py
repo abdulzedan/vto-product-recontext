@@ -1,12 +1,13 @@
-"""Entry point for the bulk image processor module."""
-
 import argparse
 import asyncio
 import sys
 from pathlib import Path
 
 from .main import main
+from .main_pipeline import main_pipeline 
 
+
+#NOTE: ... need to fix the pipeline to hanndle download failures gracefully
 
 def parse_arguments():
     """Parse command line arguments."""
@@ -69,6 +70,12 @@ Examples:
         help="Perform a dry run without actual processing",
     )
     
+    parser.add_argument(
+        "--pipeline",
+        action="store_true",
+        help="Use pipeline processing mode (processes images as they download, faster first result)",
+    )
+    
     return parser.parse_args()
 
 
@@ -110,8 +117,13 @@ async def main_cli():
         await dry_run(args.csv)
         return
     
-    # Run main processing
-    await main(args.csv)
+    # Run main processing with selected mode
+    if args.pipeline:
+        print("Using PIPELINE processing mode...")
+        await main_pipeline(args.csv)
+    else:
+        print("Using standard sequential processing mode...")
+        await main(args.csv)
 
 
 async def dry_run(csv_path: Path):
