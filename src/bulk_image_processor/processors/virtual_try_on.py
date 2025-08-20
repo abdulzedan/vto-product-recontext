@@ -227,9 +227,22 @@ class VirtualTryOnProcessor(BaseProcessor):
     ) -> Dict[str, Any]:
         """Select model using Gemini-powered fashion coordination."""
         try:
+            # For unisex items, provide all models to Gemini for selection
+            target_gender = apparel_info.get('target_gender')
+            if target_gender == 'unisex':
+                logger.info(
+                    "Unisex item detected, providing all models to Gemini for selection",
+                    detected_items=apparel_info.get('detected_items', [])
+                )
+                # Use all models for unisex items
+                available_models = self.model_images
+            else:
+                # Use models matching the target gender
+                available_models = self.model_images
+            
             # Get fashion coordination recommendation from Gemini
             recommendation = await self.analyzer.recommend_fashion_coordination(
-                apparel_image_path, apparel_info, self.model_images, exclude_models
+                apparel_image_path, apparel_info, available_models, exclude_models
             )
             
             # Find the recommended model
@@ -282,6 +295,27 @@ class VirtualTryOnProcessor(BaseProcessor):
         detected_items = apparel_info.get('detected_items', [])
         target_gender = apparel_info.get('target_gender')
         exclude_models = exclude_models or []
+        
+        # Handle unisex items by selecting from all available models
+        if target_gender == 'unisex':
+            logger.info(
+                "Unisex item detected, selecting from all available models",
+                original_gender=target_gender,
+                detected_items=detected_items
+            )
+            # Combine all models from both genders for unisex items
+            all_models = self.models_by_gender.get('woman', []) + self.models_by_gender.get('man', [])
+            suitable_models = [m for m in all_models if m['id'] not in exclude_models]
+            if suitable_models:
+                selected_model = random.choice(suitable_models)
+                logger.info(
+                    "Model selected for unisex item",
+                    model_id=selected_model['id'],
+                    model_gender=selected_model['gender'],
+                    detected_items=detected_items,
+                    excluded_count=len(exclude_models),
+                )
+                return selected_model
         
         # First try to use the gender detected by Gemini
         if target_gender and target_gender in self.models_by_gender:
