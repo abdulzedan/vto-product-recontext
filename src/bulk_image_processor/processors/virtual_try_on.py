@@ -504,7 +504,11 @@ class VirtualTryOnProcessor(BaseProcessor):
                 current_model = result.metadata.get('selected_model', {}).get('id', 'unknown')
                 
                 if quality_feedback and hasattr(quality_feedback, 'garment_applied'):
-                    if not quality_feedback.garment_applied:
+                    # Check if garment was applied AND length is accurate
+                    garment_applied = quality_feedback.garment_applied
+                    length_accurate = getattr(quality_feedback, 'length_accurate', True)
+                    
+                    if not garment_applied:
                         # Garment not applied - could be API issue, try same model again first
                         retry_count = model_retry_counts.get(current_model, 0)
                         
@@ -592,16 +596,61 @@ class VirtualTryOnProcessor(BaseProcessor):
                             # Continue with new model
                             continue
                     
-                    # If garment was applied (regardless of quality score), accept as final result
+                    elif garment_applied and not length_accurate:
+                        # Garment applied but length is wrong - switch to different model immediately
+                        # (No point retrying same model for length issues)
+                        tried_models.append(current_model)
+                        
+                        # Save failed attempt due to incorrect length
+                        failed_attempt_file = record_output_dir / f"failed_attempt_{total_attempts}.json"
+                        failed_attempt_image = record_output_dir / f"failed_attempt_{total_attempts}.jpg"
+                        
+                        # Save the failed result image
+                        if hasattr(result, '_temp_result_data'):
+                            temp_data = result._temp_result_data
+                            failed_image = temp_data['result_image']
+                            failed_image.save(failed_attempt_image, 'JPEG', quality=95)
+                        
+                        failed_attempt_data = {
+                            'total_attempt': total_attempts,
+                            'model_used': current_model,
+                            'quality_feedback': str(quality_feedback),
+                            'quality_score': getattr(result, 'quality_score', 0.0),
+                            'failure_reason': 'incorrect_garment_length',
+                            'length_issue': getattr(quality_feedback, 'length_issue', 'Length mismatch detected'),
+                            'gemini_interpretation': quality_feedback.reasoning if hasattr(quality_feedback, 'reasoning') else 'No reasoning provided',
+                            'failed_image': str(failed_attempt_image) if failed_attempt_image.exists() else None,
+                        }
+                        
+                        import json
+                        with open(failed_attempt_file, 'w') as f:
+                            json.dump(failed_attempt_data, f, indent=2, default=str)
+                        
+                        logger.warning(
+                            "Garment applied but length incorrect - switching to different model",
+                            record_id=record.id,
+                            model_id=current_model,
+                            length_issue=getattr(quality_feedback, 'length_issue', 'Length mismatch'),
+                            quality_score=getattr(result, 'quality_score', 0.0),
+                            total_attempt=total_attempts,
+                            failure_saved=str(failed_attempt_file),
+                            failed_image_saved=str(failed_attempt_image),
+                        )
+                        
+                        # Continue with new model
+                        continue
+                    
+                    # If garment was applied AND length is accurate, accept as final result
                     # Save the successful result
                     if hasattr(result, '_temp_result_data'):
                         await self._save_successful_result(result, record, image_path)
                     
                     logger.info(
-                        "Garment successfully applied, accepting result",
+                        "Garment successfully applied with correct length, accepting result",
                         record_id=record.id,
                         model_id=current_model,
                         quality_score=quality_feedback.score,
+                        length_accurate=length_accurate,
                         total_attempts=total_attempts,
                     )
                     
@@ -798,7 +847,7 @@ class VirtualTryOnProcessor(BaseProcessor):
             
             # Prepare result for return (but don't save files yet)
             temp_metadata = self.prepare_metadata(record, {
-                'apparel_analysis': apparel_analysis.dict(),
+                'apparel_analysis': apparel_analysis.model_dump(),
                 'selected_model': selected_model,
                 'api_response_time': time.time(),
                 'quality_score': quality_score,
