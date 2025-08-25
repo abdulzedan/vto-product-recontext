@@ -88,7 +88,8 @@ class ImageDownloader:
         logger.info("Loading CSV file", path=str(csv_path))
         
         try:
-            df = pd.read_csv(csv_path, dtype={'ID': str})
+            # First, try to read without specifying dtype to detect format
+            df = pd.read_csv(csv_path)
             logger.info("CSV loaded successfully", rows=len(df), columns=list(df.columns))
         except Exception as e:
             logger.error("Failed to load CSV", error=str(e))
@@ -97,35 +98,58 @@ class ImageDownloader:
                 csv_path=str(csv_path)
             )
         
-        # Validate required columns
-        required_columns = ['ID', 'Image Src', 'Image Command', 'Image Position']
-        missing_columns = [col for col in required_columns if col not in df.columns]
+        # Detect CSV format based on columns
+        is_accessories_format = False
+        if 'Image URL' in df.columns and len(df.columns) == 1:
+            # Accessories format: only has Image URL column
+            is_accessories_format = True
+            logger.info("Detected accessories CSV format (Image URL only)")
+        else:
+            # Standard format: check for required columns
+            required_columns = ['ID', 'Image Src', 'Image Command', 'Image Position']
+            missing_columns = [col for col in required_columns if col not in df.columns]
+            
+            if missing_columns:
+                raise CSVParsingError(
+                    f"Missing required columns in CSV",
+                    csv_path=str(csv_path),
+                    context={'missing_columns': missing_columns, 'found_columns': list(df.columns)}
+                )
         
-        if missing_columns:
-            raise CSVParsingError(
-                f"Missing required columns in CSV",
-                csv_path=str(csv_path),
-                context={'missing_columns': missing_columns, 'found_columns': list(df.columns)}
-            )
-        
-        # Parse records
+        # Parse records based on format
         records = []
         failed_records = []
         
         for index, row in df.iterrows():
             try:
-                # Skip rows with empty or invalid URLs
-                if pd.isna(row['Image Src']) or not str(row['Image Src']).strip():
-                    logger.warning("Skipping row with empty URL", row_index=index)
-                    continue
+                if is_accessories_format:
+                    # Accessories format handling
+                    if pd.isna(row['Image URL']) or not str(row['Image URL']).strip():
+                        logger.warning("Skipping row with empty URL", row_index=index)
+                        continue
+                    
+                    # Generate ID from index for accessories
+                    record = ImageRecord(
+                        id=f"accessory_{index + 1}",  # Generate ID
+                        image_url=str(row['Image URL']),
+                        image_command="",  # No command for accessories
+                        image_position="",  # No position for accessories
+                        row_index=index,
+                    )
+                else:
+                    # Standard format handling
+                    if pd.isna(row['Image Src']) or not str(row['Image Src']).strip():
+                        logger.warning("Skipping row with empty URL", row_index=index)
+                        continue
+                    
+                    record = ImageRecord(
+                        id=row['ID'],
+                        image_url=str(row['Image Src']),
+                        image_command=str(row['Image Command']) if pd.notna(row['Image Command']) else "",
+                        image_position=str(row['Image Position']) if pd.notna(row['Image Position']) else "",
+                        row_index=index,
+                    )
                 
-                record = ImageRecord(
-                    id=row['ID'],
-                    image_url=str(row['Image Src']),
-                    image_command=str(row['Image Command']) if pd.notna(row['Image Command']) else "",
-                    image_position=str(row['Image Position']) if pd.notna(row['Image Position']) else "",
-                    row_index=index,
-                )
                 records.append(record)
                 
             except Exception as e:
@@ -138,6 +162,7 @@ class ImageDownloader:
         
         logger.info(
             "CSV parsing completed",
+            csv_format="accessories" if is_accessories_format else "standard",
             total_rows=len(df),
             valid_records=len(records),
             failed_records=len(failed_records),
