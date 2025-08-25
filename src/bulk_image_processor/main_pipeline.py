@@ -232,7 +232,7 @@ class PipelineBulkImageProcessor:
             total_records = len(records)
             
             # Limit concurrent downloads to avoid overwhelming the network
-            semaphore = asyncio.Semaphore(min(self.settings.processing.max_workers, 15))
+            semaphore = asyncio.Semaphore(min(self.settings.processing.max_workers, 30))
             
             async def download_and_queue(record: ImageRecord):
                 if self.shutdown_requested:
@@ -305,7 +305,7 @@ class PipelineBulkImageProcessor:
         logger.info("Starting classification stage")
         
         # Limit concurrent classifications to avoid API rate limits
-        semaphore = asyncio.Semaphore(min(self.settings.processing.max_workers // 2, 10))
+        semaphore = asyncio.Semaphore(min(self.settings.processing.max_workers, 25))
         
         async def classify_worker():
             while not self.shutdown_requested:
@@ -353,7 +353,7 @@ class PipelineBulkImageProcessor:
                         self.pipeline_stats['classifications_completed'] += 1
         
         # Start multiple classification workers
-        num_workers = min(5, self.settings.processing.max_workers // 3)
+        num_workers = min(15, self.settings.processing.max_workers)
         workers = [asyncio.create_task(classify_worker()) for _ in range(num_workers)]
         await asyncio.gather(*workers)
         logger.info(f"Classification stage completed: {self.pipeline_stats['classifications_completed']} images")
@@ -363,8 +363,8 @@ class PipelineBulkImageProcessor:
         logger.info("Starting processing stage")
         
         # Separate semaphores for different processors
-        vto_semaphore = asyncio.Semaphore(min(self.settings.processing.max_workers // 2, 10))
-        product_semaphore = asyncio.Semaphore(min(self.settings.processing.max_workers // 2, 10))
+        vto_semaphore = asyncio.Semaphore(min(self.settings.processing.max_workers, 25))
+        product_semaphore = asyncio.Semaphore(min(self.settings.processing.max_workers, 25))
         
         async def process_worker():
             while not self.shutdown_requested:
@@ -444,7 +444,7 @@ class PipelineBulkImageProcessor:
                     self.pipeline_stats['processing_completed'] += 1
         
         # Start multiple processing workers
-        num_workers = min(8, self.settings.processing.max_workers // 2)
+        num_workers = min(20, self.settings.processing.max_workers)
         workers = [asyncio.create_task(process_worker()) for _ in range(num_workers)]
         await asyncio.gather(*workers)
         logger.info(f"Processing stage completed: {self.pipeline_stats['processing_completed']} images")
@@ -546,7 +546,7 @@ class PipelineBulkImageProcessor:
                         return False
             
             # Limit concurrent uploads
-            semaphore = asyncio.Semaphore(min(10, self.settings.processing.max_workers))
+            semaphore = asyncio.Semaphore(min(20, self.settings.processing.max_workers))
             
             upload_tasks = [
                 upload_file_async(local_path, gcs_path, semaphore)
