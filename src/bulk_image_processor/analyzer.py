@@ -40,9 +40,11 @@ class ClassificationResult(BaseModel):
 class FeedbackResult(BaseModel):
     """Result of image quality feedback."""
     garment_applied: bool = True  # Whether the garment was actually applied to the model
+    length_accurate: bool = True  # Whether the garment length matches the original
     passed: bool
     score: float = Field(ge=0.0, le=1.0)
     reasoning: str
+    length_issue: str = "none"  # Specific description of any length problems
     suggestions: List[str] = Field(default_factory=list)
     metadata: Dict[str, Any] = Field(default_factory=dict)
 
@@ -140,19 +142,20 @@ class GeminiAnalyzer:
         Analyze this image and classify it as either "apparel" or "product".
         
         CLASSIFICATION CRITERIA:
-        - "apparel": Clothing items, accessories, shoes, bags, jewelry, or anything that can be worn on a person
-        - "product": All other items including furniture, electronics, home goods, food, tools, etc.
+        - "apparel": ONLY clothing items that cover the body (shirts, pants, dresses, skirts, jackets, coats, sweaters, etc.) and shoes
+        - "product": Accessories (handbags, belts, bracelets, earrings, necklaces, watches, wallets), furniture, electronics, home goods, food, tools, and all other non-clothing items
         
         IMPORTANT GUIDELINES:
         - Focus on the main subject of the image
         - If multiple items are present, classify based on the primary/dominant item
-        - Shoes, bags, and jewelry should be classified as "apparel"
+        - Handbags, belts, bracelets, earrings, and all jewelry/accessories should be classified as "product" (NOT apparel)
+        - Only items that are worn as primary clothing should be "apparel"
         - Consider the context and typical use of the item
         
         GENDER DETECTION FOR APPAREL:
         If the item is classified as "apparel", also determine the target gender:
-        - "woman": Women's clothing, feminine styles, dresses, skirts, blouses, women's shoes, women's accessories
-        - "man": Men's clothing, masculine styles, suits, ties, men's shirts, men's shoes, men's accessories
+        - "woman": Women's clothing, feminine styles, dresses, skirts, blouses, women's shoes
+        - "man": Men's clothing, masculine styles, suits, ties, men's shirts, men's shoes
         - "unisex": Items that can be worn by any gender (some t-shirts, jeans, sneakers, etc.)
         
         Please respond with a JSON object containing:
@@ -335,12 +338,26 @@ class GeminiAnalyzer:
         - Style changes (e.g., different cut or fit)
         - Any visual difference that indicates the new garment was applied
         
+        CRITICAL LENGTH CHECK (MOST IMPORTANT):
+        - Compare the LENGTH of the garment in image 2 (original) with the result in image 1
+        - For shirts/tops: Check if it's cropped, regular, or long - must match original
+        - For pants: Check if they're shorts, cropped, regular, or long - must match original
+        - For dresses/skirts: Check if length is mini, knee, midi, or maxi - must match original
+        - For jackets: Check if it's cropped, regular, or long coat - must match original
+        
+        Set "length_accurate": false if:
+        - A long garment appears shortened (e.g., pants become shorts)
+        - A short garment appears lengthened (e.g., crop top becomes regular shirt)
+        - The hem line is significantly different from the original
+        - The proportions are wrong (e.g., midi skirt becomes mini)
+        
         Set "garment_applied": false ONLY if:
         - The result image is EXACTLY identical to the original model image
         - No visual changes whatsoever can be detected
         - The specific features of "{apparel_description}" are NOT present
         
         QUALITY CRITERIA (only evaluate if garment was applied):
+        - LENGTH ACCURACY: Is the garment length true to the original? (CRITICAL)
         - Realistic placement: Is the apparel positioned naturally on the person?
         - Proper fit: Does the apparel fit the person's body appropriately?
         - Color accuracy: Are the colors AND PATTERNS consistent with the original apparel?
@@ -351,22 +368,25 @@ class GeminiAnalyzer:
         
         SCORING GUIDELINES:
         - Score 0.0: Garment not applied or completely failed
-        - Score 0.2-0.4: Garment applied but poor quality, significant problems
-        - Score 0.4-0.6: Acceptable quality, noticeable issues
-        - Score 0.6-0.8: Good quality, minor issues
-        - Score 0.8-1.0: Excellent quality, very realistic
+        - Score 0.2-0.4: Garment applied but poor quality, wrong length, or significant problems
+        - Score 0.4-0.6: Acceptable quality but noticeable issues (including minor length issues)
+        - Score 0.6-0.8: Good quality with correct length, minor issues only
+        - Score 0.8-1.0: Excellent quality, very realistic, perfect length match
         
-        Pass threshold: 0.6 or higher AND garment must be applied
+        Pass threshold: 0.6 or higher AND garment must be applied AND length must be accurate
         
         Please respond with a JSON object containing:
         {{
             "garment_applied": true or false,
+            "length_accurate": true or false,
             "passed": true or false,
             "score": float between 0.0 and 1.0,
             "reasoning": "detailed explanation of the quality assessment",
+            "length_issue": "specific description of any length problems, or 'none' if accurate",
             "suggestions": ["list", "of", "improvement", "suggestions"],
             "metadata": {{
                 "fit_quality": "assessment of how well the apparel fits",
+                "length_accuracy": "detailed assessment of garment length matching",
                 "color_accuracy": "assessment of color AND pattern matching",
                 "realism": "assessment of overall realism",
                 "main_issues": ["list", "of", "main", "problems"],
@@ -490,14 +510,17 @@ class GeminiAnalyzer:
             
             # Validate and create result
             garment_applied = bool(response_data.get("garment_applied", True))
+            length_accurate = bool(response_data.get("length_accurate", True))
             passed = bool(response_data.get("passed", False))
             score = min(max(float(response_data.get("score", 0.0)), 0.0), 1.0)
             
             return FeedbackResult(
                 garment_applied=garment_applied,
+                length_accurate=length_accurate,
                 passed=passed,
                 score=score,
                 reasoning=response_data.get("reasoning", "No reasoning provided"),
+                length_issue=response_data.get("length_issue", "none"),
                 suggestions=response_data.get("suggestions", []),
                 metadata=response_data.get("metadata", {}),
             )
@@ -505,9 +528,12 @@ class GeminiAnalyzer:
         except Exception as e:
             logger.warning("Failed to parse feedback response", error=str(e))
             return FeedbackResult(
+                garment_applied=False,
+                length_accurate=False,
                 passed=False,
                 score=0.0,
                 reasoning=f"Failed to parse response: {str(e)}",
+                length_issue="parsing_error",
                 suggestions=[],
                 metadata={},
             )
@@ -565,30 +591,36 @@ class GeminiAnalyzer:
     def _create_prompt_generation_prompt(self, product_description: Optional[str] = None) -> str:
         """Create prompt for generating Product Recontext prompts."""
         base_prompt = """
-        Analyze this product image and generate a compelling prompt for high-end retail product recontextualization.
+        Analyze this product image and identify what type of accessory it is, then generate an appropriate scene prompt based on these guidelines:
         
-        REQUIREMENTS:
-        - Create a scene that positions the product for luxury/high-end retail websites
-        - Focus on premium, aspirational, and elegant contexts
-        - Ensure the product remains the focal point
-        - Use sophisticated, upscale environments
-        - Consider lighting that enhances the product's appeal
-        - Keep the prompt concise but descriptive (2-3 sentences maximum)
+        FOR HANDBAGS:
+        - Café table: Bag resting on a small café table with a coffee cup and book, shallow depth of field, soft morning light
+        - Entryway console: Bag placed on a console with keys and flowers, natural daylight coming from the side
+        - On shoulder: Bag worn over the shoulder, cropped at torso only (no face), neutral clothing to keep focus on the product
         
-        STYLE GUIDELINES:
-        - Professional photography style
-        - Clean, minimalist backgrounds when appropriate
-        - Elegant props and settings
-        - Sophisticated color palettes
-        - Premium materials and textures in the scene
+        FOR BELTS:
+        - Coiled on linen: Belt coiled in a clean circle on a textured linen surface, soft daylight highlighting the buckle
+        - On folded clothing: Belt laid across neatly folded trousers or denim on a wooden shelf, buckle facing camera
+        - Worn on waist: Belt styled on simple clothing, cropped midsection only, showing natural fit around the waist
         
-        AVOID:
-        - Cluttered or busy backgrounds
-        - Cheap or low-quality contexts
-        - Distracting elements
-        - Overly complex scenes
+        FOR BRACELETS:
+        - Vanity dish: Bracelet resting in a ceramic dish on a vanity, blurred perfume bottle in background, daylight reflection
+        - Velvet roll: Multiple bracelets stacked on a velvet jewelry roll, angled light to catch shine
+        - On wrist: Bracelet worn on a wrist, cropped to hand/forearm only, natural pose with soft light
         
-        Generate ONLY the prompt text, no additional explanation or formatting.
+        FOR EARRINGS:
+        - Tile surface: Earrings laid out on a neutral ceramic tile, soft daylight, gentle shadow detail
+        - Jewelry card: Earrings pinned on a minimal jewelry card, leaning against a mirror base for reflection
+        - On ear: Earrings worn in-ear, cropped close around ear/jawline (no face), soft even light
+        
+        GENERAL REQUIREMENTS:
+        - Keep the product as the focal point
+        - Use natural, soft lighting that enhances the product
+        - Maintain clean, uncluttered compositions
+        - Ensure professional photography style
+        - Keep prompts concise (2-3 sentences maximum)
+        
+        Generate ONLY the prompt text for the appropriate accessory type, no additional explanation.
         """
         
         if product_description:
