@@ -90,7 +90,7 @@ class StorageManager:
             blob.upload_from_filename(str(local_path))
             
             # Make the blob publicly accessible if requested
-            # Note: Disabled due to uniform bucket-level access
+            #NOTE: Disabled due to uniform bucket-level access
             # if make_public:
             #     blob.make_public()
             

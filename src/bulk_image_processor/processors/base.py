@@ -1,4 +1,5 @@
-"""Base processor class for image processing operations."""
+"""Base processor class for image processing operations.""" 
+#NOTE: take note of packaging imports  
 
 import time
 from abc import ABC, abstractmethod
