@@ -491,12 +491,23 @@ class VirtualTryOnProcessor(BaseProcessor):
         total_attempts = 0
         max_total_attempts = max_model_attempts * (max_api_retries_per_model + 1)
         
+        # Track the best result so far (even if not perfect)
+        best_result = None
+        best_score = 0.0
+        
         while total_attempts < max_total_attempts:
             total_attempts += 1
             
             result = await self._process_with_model(
                 record, image_path, record_output_dir, tried_models
             )
+            
+            # Track the best result even if not perfect
+            if result.success and hasattr(result, 'quality_score'):
+                current_score = result.quality_score
+                if current_score > best_score:
+                    best_score = current_score
+                    best_result = result
             
             # Check if garment was successfully applied
             if result.success and hasattr(result, 'metadata') and result.metadata:
@@ -662,7 +673,34 @@ class VirtualTryOnProcessor(BaseProcessor):
             
             return result
         
-        # Exhausted all model attempts
+        # Exhausted all model attempts - use best result if available
+        if best_result is not None:
+            logger.warning(
+                "All retry attempts exhausted, using best result with low confidence",
+                record_id=record.id,
+                best_score=best_score,
+                tried_models=tried_models,
+            )
+            
+            # Mark result as low confidence
+            if hasattr(best_result, '_temp_result_data'):
+                temp_data = best_result._temp_result_data
+                # Save as result_maybe.jpg instead of result.jpg
+                result_maybe_path = temp_data['result_path'].parent / "result_maybe.jpg"
+                temp_data['result_path'] = result_maybe_path
+                best_result._temp_result_data = temp_data
+                
+                # Add low confidence flag to metadata
+                if best_result.metadata:
+                    best_result.metadata['low_confidence'] = True
+                    best_result.metadata['confidence_reason'] = 'Failed quality checks but best available'
+                
+                # Save the best result even if not perfect
+                await self._save_successful_result(best_result, record, image_path)
+                
+            return best_result
+        
+        # No result at all - this should rarely happen
         return ProcessingResult(
             record_id=record.id,
             success=False,
