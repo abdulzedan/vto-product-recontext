@@ -380,7 +380,7 @@ class PipelineBulkImageProcessor:
         vto_workers = min(10, self.settings.processing.max_workers // 2)
         product_workers = min(15, self.settings.processing.max_workers)
         
-        # Send None signals to both queues
+        # Send None signals to both queues to ensure all workers exit
         for _ in range(vto_workers):
             await vto_queue.put(None)
         for _ in range(product_workers):
