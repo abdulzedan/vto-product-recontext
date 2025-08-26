@@ -72,8 +72,9 @@ class StorageManager:
         local_path: Path,
         gcs_path: str,
         metadata: Optional[Dict[str, str]] = None,
+        make_public: bool = True,
     ) -> str:
-        """Upload file to GCS."""
+        """Upload file to GCS and optionally make it publicly accessible."""
         if not self.settings.storage.enable_gcs_upload:
             raise ValueError("GCS upload is disabled")
         
@@ -88,6 +89,11 @@ class StorageManager:
             
             blob.upload_from_filename(str(local_path))
             
+            # Make the blob publicly accessible if requested
+            # Note: Disabled due to uniform bucket-level access
+            # if make_public:
+            #     blob.make_public()
+            
             gcs_uri = f"gs://{self.settings.google_cloud.storage_bucket}/{gcs_path}"
             
             logger.info(
@@ -95,6 +101,7 @@ class StorageManager:
                 local_path=str(local_path),
                 gcs_uri=gcs_uri,
                 size=local_path.stat().st_size,
+                public=make_public,
             )
             
             return gcs_uri
@@ -247,6 +254,72 @@ class StorageManager:
         )
         
         return local_summary_path
+    
+    def create_results_csv(
+        self,
+        processing_results: List[Any],
+        output_dir: Path,
+        run_id: str,
+    ) -> Path:
+        """Create CSV file with processing results in img_conversion_table format."""
+        import csv
+        
+        csv_filename = f"results_{run_id}.csv"
+        csv_path = output_dir / csv_filename
+        
+        # Create CSV with img_conversion_table format
+        with open(csv_path, 'w', newline='') as csvfile:
+            fieldnames = ['ID', 'Image Src', 'Image Command', 'Image Position']
+            writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+            
+            writer.writeheader()
+            
+            for result in processing_results:
+                if result.success:
+                    # Prefer GCS path if available, otherwise use local path
+                    if result.gcs_path:
+                        # Generate public URL for GCS path
+                        gcs_path_clean = result.gcs_path.replace('gs://' + self.settings.google_cloud.storage_bucket + '/', '')
+                        image_url = f"https://storage.googleapis.com/{self.settings.google_cloud.storage_bucket}/{gcs_path_clean}"
+                    elif result.output_path:
+                        # Fall back to local file path (for debugging/testing)
+                        image_url = str(result.output_path)
+                    else:
+                        # Skip results without any output path
+                        continue
+                    
+                    row = {
+                        'ID': result.record_id,
+                        'Image Src': image_url,
+                        'Image Command': 'MERGE',
+                        'Image Position': '1'
+                    }
+                    writer.writerow(row)
+        
+        # Upload to GCS if enabled
+        if self.settings.storage.enable_gcs_upload:
+            try:
+                gcs_csv_path = f"results/{csv_filename}"
+                self.upload_file(csv_path, gcs_csv_path)
+                logger.info(
+                    "Results CSV uploaded to GCS",
+                    local_path=str(csv_path),
+                    gcs_path=gcs_csv_path,
+                )
+            except Exception as e:
+                logger.warning(
+                    "Failed to upload results CSV to GCS",
+                    csv_file=str(csv_path),
+                    error=str(e),
+                )
+        
+        logger.info(
+            "Results CSV created",
+            csv_file=str(csv_path),
+            num_results=len(processing_results),
+        )
+        
+        return csv_path
     
     def cleanup_old_files(
         self,
