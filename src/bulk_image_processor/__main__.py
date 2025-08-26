@@ -174,7 +174,15 @@ async def dry_run(csv_path: Path):
 
 def cli_main():
     """Synchronous CLI entry point."""
+    import atexit
+    import os
+    
+    # Run the async main
     asyncio.run(main_cli())
+    
+    # Force exit to avoid hanging on gRPC threads
+    # This is a known issue with Google Cloud Python clients
+    os._exit(0)
 
 
 if __name__ == "__main__":

@@ -164,6 +164,13 @@ class BulkImageProcessor:
                 run_path,
             )
             
+            # Create results CSV in img_conversion_table format
+            self.storage_manager.create_results_csv(
+                processing_results,
+                run_path,
+                run_id,
+            )
+            
             # Step 6: Upload entire run directory to GCS
             if self.settings.storage.enable_gcs_upload:
                 logger.info("Step 6: Uploading complete run directory to GCS")
