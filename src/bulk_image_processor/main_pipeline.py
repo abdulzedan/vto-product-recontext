@@ -118,7 +118,9 @@ class PipelineBulkImageProcessor:
             # Create processing queues with appropriate sizes
             download_queue = Queue(maxsize=min(total_images, 50))
             classification_queue = Queue(maxsize=min(total_images, 50))
-            processing_queue = Queue(maxsize=min(total_images, 50))
+            # Separate queues for each processor type to enable true parallelism
+            vto_queue = Queue(maxsize=min(total_images, 50))
+            product_queue = Queue(maxsize=min(total_images, 50))
             
             # Create lists to collect results
             all_downloads = []
@@ -131,10 +133,13 @@ class PipelineBulkImageProcessor:
                     self._download_stage(csv_path, run_path, download_queue, all_downloads)
                 ),
                 asyncio.create_task(
-                    self._classification_stage(download_queue, classification_queue, all_classifications)
+                    self._classification_stage(download_queue, vto_queue, product_queue, all_classifications)
                 ),
                 asyncio.create_task(
-                    self._processing_stage(classification_queue, processing_queue, run_path, all_results)
+                    self._vto_processing_stage(vto_queue, run_path, all_results)
+                ),
+                asyncio.create_task(
+                    self._product_processing_stage(product_queue, run_path, all_results)
                 ),
                 asyncio.create_task(
                     self._progress_monitor(total_images)
@@ -309,7 +314,7 @@ class PipelineBulkImageProcessor:
             for _ in range(classification_workers):
                 await output_queue.put(None)
     
-    async def _classification_stage(self, input_queue: Queue, output_queue: Queue, results_list: List):
+    async def _classification_stage(self, input_queue: Queue, vto_queue: Queue, product_queue: Queue, results_list: List):
         """Classification stage - classifies images as they arrive from downloads."""
         logger.info("Starting classification stage")
         
@@ -345,7 +350,13 @@ class PipelineBulkImageProcessor:
                             'metadata': result.metadata,
                         }
                         
-                        await output_queue.put((record, path, category, apparel_info))
+                        # Route to appropriate processor queue
+                        if category == ImageCategory.APPAREL:
+                            await vto_queue.put((record, path, category, apparel_info))
+                        else:
+                            # PRODUCT and UNKNOWN go to product_queue
+                            await product_queue.put((record, path, category, apparel_info))
+                        
                         results_list.append((record, path, category))
                         self.pipeline_stats['classifications_completed'] += 1
                         
@@ -356,8 +367,8 @@ class PipelineBulkImageProcessor:
                         )
                     except Exception as e:
                         logger.error(f"Classification failed for {record.id}: {e}")
-                        # Put with UNKNOWN category on failure
-                        await output_queue.put((record, path, ImageCategory.UNKNOWN, {}))
+                        # Put with UNKNOWN category on failure (goes to product_queue)
+                        await product_queue.put((record, path, ImageCategory.UNKNOWN, {}))
                         self.pipeline_stats['classifications_completed'] += 1
         
         # Start multiple classification workers
@@ -365,25 +376,29 @@ class PipelineBulkImageProcessor:
         workers = [asyncio.create_task(classify_worker()) for _ in range(num_workers)]
         await asyncio.gather(*workers)
         
-        # Signal end to next stage - send None for each processing worker
-        processing_workers = min(20, self.settings.processing.max_workers)
-        for _ in range(processing_workers):
-            await output_queue.put(None)
+        # Signal end to both processing queues
+        vto_workers = min(10, self.settings.processing.max_workers // 2)
+        product_workers = min(15, self.settings.processing.max_workers)
+        
+        # Send None signals to both queues
+        for _ in range(vto_workers):
+            await vto_queue.put(None)
+        for _ in range(product_workers):
+            await product_queue.put(None)
+            
         logger.info(f"Classification stage completed: {self.pipeline_stats['classifications_completed']} images")
     
-    async def _processing_stage(self, input_queue: Queue, output_queue: Queue, run_path: Path, results_list: List):
-        """Processing stage - processes images through VTO or Product Recontext as they arrive."""
-        logger.info("Starting processing stage")
+    async def _vto_processing_stage(self, vto_queue: Queue, run_path: Path, results_list: List):
+        """VTO processing stage - processes apparel images through Virtual Try-On."""
+        logger.info("Starting VTO processing stage")
         
-        # Separate semaphores for different processors
-        vto_semaphore = asyncio.Semaphore(min(self.settings.processing.max_workers, 25))
-        product_semaphore = asyncio.Semaphore(min(self.settings.processing.max_workers, 25))
+        vto_semaphore = asyncio.Semaphore(min(self.settings.processing.max_workers // 2, 15))
         
-        async def process_worker():
+        async def vto_worker():
             while not self.shutdown_requested:
                 try:
                     # Use timeout to avoid indefinite waiting
-                    item = await asyncio.wait_for(input_queue.get(), timeout=1.0)
+                    item = await asyncio.wait_for(vto_queue.get(), timeout=1.0)
                 except asyncio.TimeoutError:
                     continue
                     
@@ -394,59 +409,26 @@ class PipelineBulkImageProcessor:
                 record, path, category, apparel_info = item
                 
                 try:
-                    if category == ImageCategory.APPAREL:
-                        async with vto_semaphore:
-                            vto_output_dir = run_path / "virtual_try_on"
-                            result = await self.vto_processor.process_with_retry(
-                                record, path, vto_output_dir
-                            )
-                            results_list.append(result)
-                            self.pipeline_stats['processing_completed'] += 1
-                            
-                            # Track time to first result
-                            if self.pipeline_stats['first_result_time'] is None:
-                                self.pipeline_stats['first_result_time'] = time.time()
-                            
-                            logger.info(
-                                f"VTO processed: {record.id}",
-                                success=result.success,
-                                quality_score=result.quality_score,
-                            )
-                    elif category == ImageCategory.PRODUCT:
-                        async with product_semaphore:
-                            product_output_dir = run_path / "product_recontext"
-                            result = await self.product_processor.process_with_retry(
-                                record, path, product_output_dir
-                            )
-                            results_list.append(result)
-                            self.pipeline_stats['processing_completed'] += 1
-                            
-                            # Track time to first result
-                            if self.pipeline_stats['first_result_time'] is None:
-                                self.pipeline_stats['first_result_time'] = time.time()
-                            
-                            logger.info(
-                                f"Product Recontext processed: {record.id}",
-                                success=result.success,
-                                quality_score=result.quality_score,
-                            )
-                    else:
-                        # Unknown category - default to product recontext
-                        async with product_semaphore:
-                            product_output_dir = run_path / "product_recontext"
-                            result = await self.product_processor.process_with_retry(
-                                record, path, product_output_dir
-                            )
-                            results_list.append(result)
-                            self.pipeline_stats['processing_completed'] += 1
-                            
-                            logger.info(
-                                f"Unknown category processed with Product Recontext: {record.id}",
-                                success=result.success,
-                            )
-                            
+                    async with vto_semaphore:
+                        vto_output_dir = run_path / "virtual_try_on"
+                        result = await self.vto_processor.process_with_retry(
+                            record, path, vto_output_dir
+                        )
+                        results_list.append(result)
+                        self.pipeline_stats['processing_completed'] += 1
+                        
+                        # Track time to first result
+                        if self.pipeline_stats['first_result_time'] is None:
+                            self.pipeline_stats['first_result_time'] = time.time()
+                        
+                        logger.info(
+                            f"VTO processed: {record.id}",
+                            success=result.success,
+                            quality_score=result.quality_score,
+                        )
+                        
                 except Exception as e:
-                    logger.error(f"Processing failed for {record.id}: {e}")
+                    logger.error(f"VTO processing failed for {record.id}: {e}")
                     # Create failed result
                     result = ProcessingResult(
                         record_id=record.id,
@@ -456,11 +438,73 @@ class PipelineBulkImageProcessor:
                     results_list.append(result)
                     self.pipeline_stats['processing_completed'] += 1
         
-        # Start multiple processing workers
-        num_workers = min(20, self.settings.processing.max_workers)
-        workers = [asyncio.create_task(process_worker()) for _ in range(num_workers)]
+        # Start multiple VTO workers
+        num_workers = min(10, self.settings.processing.max_workers // 2)
+        workers = [asyncio.create_task(vto_worker()) for _ in range(num_workers)]
         await asyncio.gather(*workers)
-        logger.info(f"Processing stage completed: {self.pipeline_stats['processing_completed']} images")
+        logger.info(f"VTO processing stage completed")
+    
+    async def _product_processing_stage(self, product_queue: Queue, run_path: Path, results_list: List):
+        """Product processing stage - processes product/unknown images through Product Recontext."""
+        logger.info("Starting Product Recontext processing stage")
+        
+        product_semaphore = asyncio.Semaphore(min(self.settings.processing.max_workers, 25))
+        
+        async def product_worker():
+            while not self.shutdown_requested:
+                try:
+                    # Use timeout to avoid indefinite waiting
+                    item = await asyncio.wait_for(product_queue.get(), timeout=1.0)
+                except asyncio.TimeoutError:
+                    continue
+                    
+                if item is None:
+                    # End signal received
+                    break
+                
+                record, path, category, apparel_info = item
+                
+                try:
+                    async with product_semaphore:
+                        product_output_dir = run_path / "product_recontext"
+                        result = await self.product_processor.process_with_retry(
+                            record, path, product_output_dir
+                        )
+                        results_list.append(result)
+                        self.pipeline_stats['processing_completed'] += 1
+                        
+                        # Track time to first result
+                        if self.pipeline_stats['first_result_time'] is None:
+                            self.pipeline_stats['first_result_time'] = time.time()
+                        
+                        if category == ImageCategory.PRODUCT:
+                            logger.info(
+                                f"Product Recontext processed: {record.id}",
+                                success=result.success,
+                                quality_score=result.quality_score,
+                            )
+                        else:
+                            logger.info(
+                                f"Unknown category processed with Product Recontext: {record.id}",
+                                success=result.success,
+                            )
+                            
+                except Exception as e:
+                    logger.error(f"Product processing failed for {record.id}: {e}")
+                    # Create failed result
+                    result = ProcessingResult(
+                        record_id=record.id,
+                        success=False,
+                        error_message=str(e),
+                    )
+                    results_list.append(result)
+                    self.pipeline_stats['processing_completed'] += 1
+        
+        # Start multiple Product workers
+        num_workers = min(15, self.settings.processing.max_workers)
+        workers = [asyncio.create_task(product_worker()) for _ in range(num_workers)]
+        await asyncio.gather(*workers)
+        logger.info(f"Product Recontext processing stage completed")
     
     async def _progress_monitor(self, total_images: int):
         """Monitor and log pipeline progress."""
