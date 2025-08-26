@@ -200,6 +200,13 @@ class PipelineBulkImageProcessor:
                 run_path,
             )
             
+            # Create results CSV in img_conversion_table format
+            self.storage_manager.create_results_csv(
+                all_results,
+                run_path,
+                run_id,
+            )
+            
             # Upload to GCS if enabled
             if self.settings.storage.enable_gcs_upload:
                 logger.info("Uploading complete run directory to GCS")
@@ -297,8 +304,10 @@ class PipelineBulkImageProcessor:
             else:
                 logger.info(f"Download stage completed: {self.pipeline_stats['downloads_completed']}/{total_records} images")
             
-            # Signal end of downloads
-            await output_queue.put(None)
+            # Signal end of downloads to all classification workers
+            classification_workers = min(15, self.settings.processing.max_workers)
+            for _ in range(classification_workers):
+                await output_queue.put(None)
     
     async def _classification_stage(self, input_queue: Queue, output_queue: Queue, results_list: List):
         """Classification stage - classifies images as they arrive from downloads."""
@@ -316,8 +325,7 @@ class PipelineBulkImageProcessor:
                     continue
                     
                 if item is None:
-                    # End signal received
-                    await output_queue.put(None)
+                    # End signal received - don't propagate, let all workers exit
                     break
                 
                 record, path = item
@@ -356,6 +364,11 @@ class PipelineBulkImageProcessor:
         num_workers = min(15, self.settings.processing.max_workers)
         workers = [asyncio.create_task(classify_worker()) for _ in range(num_workers)]
         await asyncio.gather(*workers)
+        
+        # Signal end to next stage - send None for each processing worker
+        processing_workers = min(20, self.settings.processing.max_workers)
+        for _ in range(processing_workers):
+            await output_queue.put(None)
         logger.info(f"Classification stage completed: {self.pipeline_stats['classifications_completed']} images")
     
     async def _processing_stage(self, input_queue: Queue, output_queue: Queue, run_path: Path, results_list: List):
