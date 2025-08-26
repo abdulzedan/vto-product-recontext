@@ -976,6 +976,10 @@ class VirtualTryOnProcessor(BaseProcessor):
             result_blob = bucket.blob(f"{base_path}/result.jpg")
             result_blob.upload_from_filename(str(result_path))
             
+            # Note: Public access needs to be configured at bucket/folder level 
+            # due to uniform bucket-level access being enabled.
+            # The GCS URI will be publicly accessible if bucket IAM is configured correctly.
+            
             # Upload selected model image copy to outputs
             if model_copy_path.exists():
                 model_blob = bucket.blob(f"{base_path}/selected_model.jpg")
