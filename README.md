@@ -15,14 +15,21 @@ Bulk image processing system that routes product images to Virtual Try-On for ap
 - CSV-based batch processing
 - Retry mechanism with quality validation
 
-## Installation
+## Quick Setup
 
 ```bash
 git clone https://github.com/abdulzedan/vto-product-recontext.git
 cd vto-product-recontext
-python -m venv .venv
+chmod +x scripts/setup_env.sh
+./scripts/setup_env.sh
+```
+
+Or manually:
+```bash
+python3 -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev]"
+cp .env.example .env  # Edit with your credentials
 ```
 
 ## Configuration
@@ -30,59 +37,95 @@ pip install -e ".[dev]"
 Copy `.env.example` to `.env` and configure:
 
 ```env
-PROJECT_ID=your-gcp-project
+# Required
+PROJECT_ID=your-gcp-project-id
 GOOGLE_CLOUD_STORAGE=your-bucket-name
-GEMINI_API_KEY=your-gemini-key
+GEMINI_API_KEY=your-gemini-api-key
+
+# Optional (has defaults)
 MAX_WORKERS=10
 MAX_RETRIES=5
+LOCATION=us-central1
+```
+
+**Important**: Disable uniform bucket-level access on your GCS bucket:
+```bash
+gsutil uniformbucketlevelaccess set off gs://your-bucket-name
 ```
 
 ## Usage
 
-1. Place your CSV file at `image_folder/img_conversion_table.csv`:
-```csv
-ID,Image Src,Image Command,Image Position
-001,https://example.com/shirt.jpg,process,front
-002,https://example.com/vase.jpg,enhance,center
+### Basic Usage
+```bash
+# Process default CSV
+python -m bulk_image_processor
+
+# Process specific CSV
+python -m bulk_image_processor --csv your-file.csv
+
+# Use pipeline mode (faster first results)
+python -m bulk_image_processor --csv your-file.csv --pipeline
+
+# Adjust workers
+python -m bulk_image_processor --max-workers 15
 ```
 
-2. Run the processor:
-```bash
-python -m bulk_image_processor
+### CSV Format
+```csv
+ID,Image Src,Image Command,Image Position
+9848782618913,https://example.com/shirt.jpg,MERGE,1
+accessory_001,https://example.com/belt.jpg,brown belt,waist
 ```
+
+- **MERGE** + numeric position → Virtual Try-On processing
+- Descriptive text + body position → Product Recontext processing
 
 ## Project Structure
 
 ```
 src/bulk_image_processor/
-├── main.py                  # Main processing logic
-├── analyzer.py              # Gemini integration
+├── __main__.py              # CLI entry point
+├── main.py                  # Standard processing mode
+├── main_pipeline.py         # Pipeline mode (parallel processing)
+├── analyzer.py              # Gemini AI integration
 ├── downloader.py            # Image downloading
+├── storage.py               # Local/GCS storage
 ├── processors/
-│   ├── virtual_try_on.py
-│   └── product_recontext.py
+│   ├── virtual_try_on.py    # VTO processor
+│   └── product_recontext.py # Product recontext processor
 └── utils.py
 
 tests/                       # Test suite
+scripts/                     # Setup scripts
 .github/workflows/           # CI/CD
 ```
 
 ## Testing
 
 ```bash
-pytest                           # Run tests
-pytest --cov=src                 # With coverage
-pytest tests/test_exceptions.py  # Specific module
+make test                        # Run tests
+make test-cov                    # With coverage report
+pytest tests/test_config.py -v   # Specific module
+
+# Verify setup
+python -m bulk_image_processor --dry-run
 ```
 
 ## How It Works
 
-1. Downloads images from CSV URLs
-2. Classifies each image using Gemini
-3. Routes apparel to Virtual Try-On processor
-4. Routes products to Product Recontext processor
-5. Validates output quality
-6. Saves results to local and cloud storage
+### Pipeline Mode (Default)
+1. **Download Stage**: Downloads images from CSV URLs in parallel
+2. **Classification Stage**: Classifies images using Gemini AI
+3. **Parallel Processing**: 
+   - Apparel → Virtual Try-On processor
+   - Products/Accessories → Product Recontext processor
+4. **Quality Validation**: Validates output quality and saves results
+5. **Storage**: Saves to local directory and uploads to GCS with public access
+
+### Processing Flow
+- **VTO Processing**: Fashion coordination, model selection, quality validation
+- **Product Recontext**: Scene recontextualization for retail environments
+- **True Parallelism**: Both processors run simultaneously for optimal performance
 
 ## Requirements
 
