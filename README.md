@@ -43,7 +43,13 @@ MAX_RETRIES=5
 LOCATION=us-central1
 ```
 
-### Step 3: Google Cloud Setup
+### Step 3: Google Cloud Authentication (Required First)
+Authenticate with Google Cloud:
+```bash
+gcloud auth application-default login
+```
+
+### Step 4: Google Cloud Setup
 Run the automated GCloud setup script:
 ```bash
 ./scripts/setup_gcloud.sh
@@ -56,7 +62,7 @@ This script will:
 - **Disable uniform bucket-level access** (critical for public URLs)
 - Configure proper permissions
 
-### Step 4: Verify Setup
+### Step 5: Verify Setup
 ```bash
 source .venv/bin/activate
 python -m bulk_image_processor --dry-run

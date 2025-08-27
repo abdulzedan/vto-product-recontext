@@ -88,12 +88,31 @@ echo "  Bucket Name: $BUCKET_NAME"
 echo "  Location: $LOCATION"
 echo ""
 
-# Step 1: Set the project
-echo "Step 1: Setting Google Cloud project..."
-if gcloud config set project "$PROJECT_ID" 2>/dev/null; then
-    echo -e "${GREEN}✓ Project set to: $PROJECT_ID${NC}"
+# Step 1: Check if project exists and set it
+echo "Step 1: Checking and setting Google Cloud project..."
+
+# First check if project exists
+if gcloud projects describe "$PROJECT_ID" &>/dev/null; then
+    if gcloud config set project "$PROJECT_ID" 2>/dev/null; then
+        echo -e "${GREEN}✓ Project set to: $PROJECT_ID${NC}"
+    else
+        echo -e "${RED}✗ Failed to set project configuration${NC}"
+        exit 1
+    fi
 else
-    echo -e "${RED}✗ Failed to set project. Please check if the project exists${NC}"
+    echo -e "${RED}✗ Project '$PROJECT_ID' not found or no access${NC}"
+    echo ""
+    echo "Available projects in your account:"
+    gcloud projects list --format="table(projectId,name,projectNumber)" 2>/dev/null || echo "  (Unable to list projects - check authentication)"
+    echo ""
+    echo "Solutions:"
+    echo "1. Use an existing project from the list above:"
+    echo "   - Edit .env file and change PROJECT_ID to an existing project"
+    echo "2. Create a new project:"
+    echo "   - Run: gcloud projects create your-unique-project-id-123"
+    echo "   - Then update PROJECT_ID in .env file"
+    echo "3. Check if you're authenticated to the correct Google account:"
+    echo "   - Run: gcloud auth list"
     exit 1
 fi
 
