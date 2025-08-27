@@ -17,40 +17,49 @@ Bulk image processing system that routes product images to Virtual Try-On for ap
 
 ## Quick Setup
 
+### Step 1: Environment Setup
 ```bash
 git clone https://github.com/abdulzedan/vto-product-recontext.git
 cd vto-product-recontext
-chmod +x scripts/setup_env.sh
+
+# Make scripts executable
+chmod +x scripts/*.sh
+
+# Run Python environment setup
 ./scripts/setup_env.sh
 ```
 
-Or manually:
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -e ".[dev]"
-cp .env.example .env  # Edit with your credentials
-```
-
-## Configuration
-
-Copy `.env.example` to `.env` and configure:
-
+### Step 2: Configure Credentials
+Edit `.env` file with your credentials:
 ```env
-# Required
+# Required - Replace with your actual values
 PROJECT_ID=your-gcp-project-id
 GOOGLE_CLOUD_STORAGE=your-bucket-name
 GEMINI_API_KEY=your-gemini-api-key
 
 # Optional (has defaults)
-MAX_WORKERS=10
+MAX_WORKERS=25
 MAX_RETRIES=5
 LOCATION=us-central1
 ```
 
-**Important**: Disable uniform bucket-level access on your GCS bucket:
+### Step 3: Google Cloud Setup
+Run the automated GCloud setup script:
 ```bash
-gsutil uniformbucketlevelaccess set off gs://your-bucket-name
+./scripts/setup_gcloud.sh
+```
+
+This script will:
+- Set your GCP project
+- Enable required APIs (Vertex AI, Storage, Gemini)
+- Create your storage bucket
+- **Disable uniform bucket-level access** (critical for public URLs)
+- Configure proper permissions
+
+### Step 4: Verify Setup
+```bash
+source .venv/bin/activate
+python -m bulk_image_processor --dry-run
 ```
 
 ## Usage
