@@ -292,7 +292,7 @@ class TestVirtualTryOnProcessor:
         # Mock client and prediction
         mock_client_instance = MagicMock()
         mock_client.return_value = mock_client_instance
-        mock_load_images.return_value = None
+        # Mock model images data - set up after processor initialization
 
         # Mock analyzer feedback
         mock_analyzer.analyze_virtual_try_on_quality = AsyncMock(
@@ -304,6 +304,16 @@ class TestVirtualTryOnProcessor:
         # Disable GCS upload for this test
         mock_settings.storage.enable_gcs_upload = False
         processor = VirtualTryOnProcessor(mock_settings, mock_analyzer)
+        
+        # Set up mock model images after processor initialization
+        processor.model_images = [
+            {
+                "id": "test_model",
+                "path": image_path,
+                "gender": "women",
+                "metadata": {"style": "casual"}
+            }
+        ]
 
         # Mock the processing steps
         with patch.object(

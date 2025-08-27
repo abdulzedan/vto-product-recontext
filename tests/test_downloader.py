@@ -55,10 +55,10 @@ class TestImageDownloader:
             records = downloader.load_csv(temp_csv_file)
 
             assert len(records) == 3
-            assert records[0].id == "001"
+            assert records[0].id == "1"
             assert records[0].image_url == "https://example.com/shirt.jpg"
-            assert records[1].id == "002"
-            assert records[2].id == "003"
+            assert records[1].id == "2"
+            assert records[2].id == "3"
 
     @pytest.mark.asyncio
     async def test_load_csv_missing_columns(self, mock_settings, tmp_path):

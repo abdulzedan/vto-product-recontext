@@ -90,7 +90,7 @@ class TestGeminiAnalyzer:
             "metadata": {"color": "blue", "style": "casual"}
         }
         """
-        mock_gemini_model.generate_content = MagicMock(return_value=mock_response)
+        mock_gemini_model.generate_content_async = AsyncMock(return_value=mock_response)
 
         analyzer = GeminiAnalyzer(mock_settings)
         result = await analyzer.classify_image(test_image_path)
@@ -116,7 +116,7 @@ class TestGeminiAnalyzer:
             "metadata": {"material": "ceramic", "use": "decoration"}
         }
         """
-        mock_gemini_model.generate_content = MagicMock(return_value=mock_response)
+        mock_gemini_model.generate_content_async = AsyncMock(return_value=mock_response)
 
         analyzer = GeminiAnalyzer(mock_settings)
         result = await analyzer.classify_image(test_image_path)
@@ -141,7 +141,7 @@ class TestGeminiAnalyzer:
             "metadata": {}
         }
         """
-        mock_gemini_model.generate_content = MagicMock(return_value=mock_response)
+        mock_gemini_model.generate_content_async = AsyncMock(return_value=mock_response)
 
         analyzer = GeminiAnalyzer(mock_settings)
         result = await analyzer.classify_image(
@@ -152,7 +152,7 @@ class TestGeminiAnalyzer:
         assert result.confidence == 0.92
 
         # Verify the prompt includes additional context
-        call_args = mock_gemini_model.generate_content.call_args
+        call_args = mock_gemini_model.generate_content_async.call_args
         assert "Additional context: Command: virtual-try-on" in str(call_args)
 
     @pytest.mark.asyncio
@@ -162,7 +162,7 @@ class TestGeminiAnalyzer:
         """Test handling invalid JSON response from Gemini."""
         mock_response = MagicMock()
         mock_response.text = "This is not valid JSON"
-        mock_gemini_model.generate_content = MagicMock(return_value=mock_response)
+        mock_gemini_model.generate_content_async = AsyncMock(return_value=mock_response)
 
         analyzer = GeminiAnalyzer(mock_settings)
         result = await analyzer.classify_image(test_image_path)
@@ -184,7 +184,7 @@ class TestGeminiAnalyzer:
             "reasoning": "Cannot determine category"
         }
         """
-        mock_gemini_model.generate_content = MagicMock(return_value=mock_response)
+        mock_gemini_model.generate_content_async = AsyncMock(return_value=mock_response)
 
         analyzer = GeminiAnalyzer(mock_settings)
 
@@ -198,7 +198,7 @@ class TestGeminiAnalyzer:
         self, mock_settings, mock_gemini_model, test_image_path
     ):
         """Test handling API errors."""
-        mock_gemini_model.generate_content = MagicMock(
+        mock_gemini_model.generate_content_async = AsyncMock(
             side_effect=Exception("API quota exceeded")
         )
 
@@ -225,7 +225,7 @@ class TestGeminiAnalyzer:
             }
         }
         """
-        mock_gemini_model.generate_content = MagicMock(return_value=mock_response)
+        mock_gemini_model.generate_content_async = AsyncMock(return_value=mock_response)
 
         analyzer = GeminiAnalyzer(mock_settings)
         result = await analyzer.analyze_virtual_try_on_quality(
@@ -257,7 +257,7 @@ class TestGeminiAnalyzer:
             }
         }
         """
-        mock_gemini_model.generate_content = MagicMock(return_value=mock_response)
+        mock_gemini_model.generate_content_async = AsyncMock(return_value=mock_response)
 
         analyzer = GeminiAnalyzer(mock_settings)
         result = await analyzer.analyze_product_recontext_quality(
@@ -278,7 +278,7 @@ class TestGeminiAnalyzer:
         """Test product recontext prompt generation."""
         mock_response = MagicMock()
         mock_response.text = "A luxury ceramic vase on a marble pedestal in a high-end gallery with soft lighting"
-        mock_gemini_model.generate_content = MagicMock(return_value=mock_response)
+        mock_gemini_model.generate_content_async = AsyncMock(return_value=mock_response)
 
         analyzer = GeminiAnalyzer(mock_settings)
         result = await analyzer.generate_product_recontext_prompt(
