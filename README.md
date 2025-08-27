@@ -3,7 +3,7 @@
 [![Tests](https://github.com/abdulzedan/vto-product-recontext/actions/workflows/test.yml/badge.svg)](https://github.com/abdulzedan/vto-product-recontext/actions/workflows/test.yml)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 
-Bulk image processing system that routes product images to Virtual Try-On for apparel or Product Recontext for other items using Gemini AI classification.
+Bulk image processing system that routes product images to Virtual Try-On for apparel or Product Recontext for other items using intelligent classification.
 
 ## Features
 
@@ -87,7 +87,7 @@ src/bulk_image_processor/
 ├── __main__.py              # CLI entry point
 ├── main.py                  # Standard processing mode
 ├── main_pipeline.py         # Pipeline mode (parallel processing)
-├── analyzer.py              # Gemini AI integration
+├── analyzer.py              # Image analysis and classification
 ├── downloader.py            # Image downloading
 ├── storage.py               # Local/GCS storage
 ├── processors/

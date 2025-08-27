@@ -11,9 +11,9 @@ from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlparse
 
 import structlog
-from PIL import Image
 from google.cloud import storage
 from google.cloud.aiplatform.gapic import PredictResponse
+from PIL import Image
 
 logger = structlog.get_logger(__name__)
 
@@ -41,7 +41,7 @@ def setup_logging(level: str = "INFO", format_type: str = "json") -> None:
         wrapper_class=structlog.stdlib.BoundLogger,
         cache_logger_on_first_use=True,
     )
-    
+
     # Configure standard logging
     logging.basicConfig(
         level=getattr(logging, level.upper()),
@@ -52,6 +52,7 @@ def setup_logging(level: str = "INFO", format_type: str = "json") -> None:
 def generate_unique_id(prefix: str = "") -> str:
     """Generate a unique identifier with timestamp."""
     import uuid
+
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
     unique_suffix = str(uuid.uuid4())[:8]  # Add random component for uniqueness
     unique_id = f"{timestamp}_{unique_suffix}"
@@ -64,13 +65,13 @@ def validate_image_url(url: str) -> bool:
         parsed = urlparse(url)
         if not parsed.scheme or not parsed.netloc:
             return False
-        
+
         # Only allow HTTP/HTTPS schemes
-        if parsed.scheme.lower() not in ('http', 'https'):
+        if parsed.scheme.lower() not in ("http", "https"):
             return False
-        
+
         # Check if URL ends with common image extensions
-        image_extensions = {'.jpg', '.jpeg', '.png', '.gif', '.bmp', '.tiff', '.webp'}
+        image_extensions = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".tiff", ".webp"}
         path_lower = parsed.path.lower()
         return any(path_lower.endswith(ext) for ext in image_extensions)
     except Exception:
@@ -85,7 +86,7 @@ def ensure_directory(path: Path) -> None:
 def encode_image_to_base64(image: Image.Image) -> str:
     """Encode a PIL Image to base64 string."""
     buffer = io.BytesIO()
-    image.save(buffer, format='PNG')
+    image.save(buffer, format="PNG")
     return base64.b64encode(buffer.getvalue()).decode("utf-8")
 
 
@@ -96,35 +97,34 @@ def decode_base64_to_image(base64_string: str) -> Image.Image:
 
 
 def prediction_to_pil_image(
-    prediction: Dict[str, Any], 
-    size: Optional[Tuple[int, int]] = None
+    prediction: Dict[str, Any], size: Optional[Tuple[int, int]] = None
 ) -> Image.Image:
     """Convert prediction response to PIL Image."""
     if "bytesBase64Encoded" not in prediction:
         raise ValueError("Prediction does not contain bytesBase64Encoded field")
-    
+
     encoded_bytes_string = prediction["bytesBase64Encoded"]
     decoded_image_bytes = base64.b64decode(encoded_bytes_string)
     image_pil = Image.open(io.BytesIO(decoded_image_bytes))
-    
+
     if size:
         image_pil.thumbnail(size)
-    
+
     return image_pil
 
 
 def get_next_run_id(output_dir: Path = Path("./output")) -> str:
     """Get the next available run ID by checking existing runs.
-    
+
     Format: run_001, run_002, etc.
     Only checks run_id numbers, ignores dates in folder structure.
     """
     if not output_dir.exists():
         return "run_001"
-    
+
     # Find all run directories across all date folders
     run_numbers = []
-    
+
     # Search through all date folders (YYYY/MM/DD structure)
     for year_dir in output_dir.glob("????"):
         if not year_dir.is_dir():
@@ -145,7 +145,7 @@ def get_next_run_id(output_dir: Path = Path("./output")) -> str:
                                 run_numbers.append(run_num)
                             except ValueError:
                                 continue
-    
+
     # Also check root level for any legacy run directories
     for run_dir in output_dir.glob("run_*"):
         if run_dir.is_dir():
@@ -156,11 +156,11 @@ def get_next_run_id(output_dir: Path = Path("./output")) -> str:
                     run_numbers.append(run_num)
                 except ValueError:
                     continue
-    
+
     # Get next run number
     if not run_numbers:
         return "run_001"
-    
+
     next_run = max(run_numbers) + 1
     return f"run_{next_run:03d}"
 
@@ -168,31 +168,36 @@ def get_next_run_id(output_dir: Path = Path("./output")) -> str:
 def create_run_directory(run_id: str, base_output_dir: Path = Path("./output")) -> Path:
     """Create run directory with date structure: output/YYYY/MM/DD/run_XXX/"""
     from datetime import datetime
-    
+
     now = datetime.now()
-    date_path = base_output_dir / f"{now.year:04d}" / f"{now.month:02d}" / f"{now.day:02d}"
+    date_path = (
+        base_output_dir / f"{now.year:04d}" / f"{now.month:02d}" / f"{now.day:02d}"
+    )
     run_path = date_path / run_id
-    
+
     # Create the full directory structure
     run_path.mkdir(parents=True, exist_ok=True)
-    
+
     # Create symlink for latest run (for easy access)
     latest_link = base_output_dir / "latest"
     if latest_link.exists() or latest_link.is_symlink():
         latest_link.unlink()
-    
+
     # Create relative symlink to the run directory
     import os
+
     relative_path = os.path.relpath(run_path, base_output_dir)
     latest_link.symlink_to(relative_path)
-    
+
     return run_path
 
 
-def create_run_manifest(run_id: str, run_path: Path, csv_file: Path, settings) -> Dict[str, Any]:
+def create_run_manifest(
+    run_id: str, run_path: Path, csv_file: Path, settings
+) -> Dict[str, Any]:
     """Create manifest file for the run."""
     from datetime import datetime
-    
+
     manifest = {
         "run_id": run_id,
         "timestamp": datetime.now().isoformat(),
@@ -203,84 +208,89 @@ def create_run_manifest(run_id: str, run_path: Path, csv_file: Path, settings) -
                 "max_workers": settings.processing.max_workers,
                 "max_retries": settings.processing.max_retries,
                 "project_id": settings.google_cloud.project_id,
-            }
+            },
         },
         "status": "started",
         "output_path": str(run_path),
     }
-    
+
     # Save manifest
     manifest_path = run_path / "manifest.json"
     import json
-    with open(manifest_path, 'w') as f:
+
+    with open(manifest_path, "w") as f:
         json.dump(manifest, f, indent=2)
-    
+
     return manifest
 
 
-def generate_run_statistics(run_path: Path, processing_results: List, total_duration: float) -> Dict[str, Any]:
+def generate_run_statistics(
+    run_path: Path, processing_results: List, total_duration: float
+) -> Dict[str, Any]:
     """Generate comprehensive statistics for a run."""
+    from collections import Counter, defaultdict
     from datetime import datetime
-    from collections import defaultdict, Counter
-    
+
     # Analyze results
-    success_count = sum(1 for r in processing_results if r.get('success', False))
+    success_count = sum(1 for r in processing_results if r.get("success", False))
     failure_count = len(processing_results) - success_count
-    
+
     # Group by processor type
-    by_processor = defaultdict(lambda: {
-        'processed': 0,
-        'succeeded': 0, 
-        'failed': 0,
-        'failure_reasons': Counter(),
-        'quality_scores': [],
-        'processing_times': []
-    })
-    
+    by_processor = defaultdict(
+        lambda: {
+            "processed": 0,
+            "succeeded": 0,
+            "failed": 0,
+            "failure_reasons": Counter(),
+            "quality_scores": [],
+            "processing_times": [],
+        }
+    )
+
     total_api_calls = 0
     quality_scores = []
-    
+
     for result in processing_results:
-        processor_type = result.get('processor_type', 'unknown')
+        processor_type = result.get("processor_type", "unknown")
         stats = by_processor[processor_type]
-        
-        stats['processed'] += 1
-        
-        if result.get('success', False):
-            stats['succeeded'] += 1
-            if 'quality_score' in result:
-                score = result['quality_score']
-                stats['quality_scores'].append(score)
+
+        stats["processed"] += 1
+
+        if result.get("success", False):
+            stats["succeeded"] += 1
+            if "quality_score" in result:
+                score = result["quality_score"]
+                stats["quality_scores"].append(score)
                 quality_scores.append(score)
         else:
-            stats['failed'] += 1
+            stats["failed"] += 1
             # Try to extract failure reason
-            error_msg = result.get('error_message', 'unknown')
-            if 'garment_not_applied' in error_msg or 'not applied' in error_msg:
-                stats['failure_reasons']['garment_not_applied'] += 1
-            elif 'quality' in error_msg.lower():
-                stats['failure_reasons']['quality_too_low'] += 1
+            error_msg = result.get("error_message", "unknown")
+            if "garment_not_applied" in error_msg or "not applied" in error_msg:
+                stats["failure_reasons"]["garment_not_applied"] += 1
+            elif "quality" in error_msg.lower():
+                stats["failure_reasons"]["quality_too_low"] += 1
             else:
-                stats['failure_reasons']['other'] += 1
-        
-        if 'processing_time' in result:
-            stats['processing_times'].append(result['processing_time'])
-        
+                stats["failure_reasons"]["other"] += 1
+
+        if "processing_time" in result:
+            stats["processing_times"].append(result["processing_time"])
+
         # Count API calls (estimate)
-        if 'attempts' in result:
-            total_api_calls += result['attempts']
+        if "attempts" in result:
+            total_api_calls += result["attempts"]
         else:
             total_api_calls += 1  # At least one API call
-    
+
     # Calculate quality score distribution
     score_distribution = {
         "0.0-0.2": 0,
-        "0.2-0.4": 0, 
+        "0.2-0.4": 0,
         "0.4-0.6": 0,
         "0.6-0.8": 0,
-        "0.8-1.0": 0
+        "0.8-1.0": 0,
     }
-    
+
     for score in quality_scores:
         if score <= 0.2:
             score_distribution["0.0-0.2"] += 1
@@ -292,7 +302,7 @@ def generate_run_statistics(run_path: Path, processing_results: List, total_dura
             score_distribution["0.6-0.8"] += 1
         else:
             score_distribution["0.8-1.0"] += 1
-    
+
     # Build statistics
     statistics = {
         "run_id": run_path.name,
@@ -303,51 +313,64 @@ def generate_run_statistics(run_path: Path, processing_results: List, total_dura
         "results": {
             "success_count": success_count,
             "failure_count": failure_count,
-            "success_rate": success_count / len(processing_results) if processing_results else 0.0,
-            "by_processor": dict(by_processor)
+            "success_rate": (
+                success_count / len(processing_results) if processing_results else 0.0
+            ),
+            "by_processor": dict(by_processor),
         },
         "performance": {
             "total_duration": round(total_duration, 2),
-            "avg_per_item": round(total_duration / len(processing_results), 2) if processing_results else 0.0,
+            "avg_per_item": (
+                round(total_duration / len(processing_results), 2)
+                if processing_results
+                else 0.0
+            ),
             "api_calls": total_api_calls,
-            "cost_estimate_usd": round(total_api_calls * 0.02, 3)  # Rough estimate
+            "cost_estimate_usd": round(total_api_calls * 0.02, 3),  # Rough estimate
         },
         "quality_metrics": {
-            "avg_score": round(sum(quality_scores) / len(quality_scores), 3) if quality_scores else 0.0,
+            "avg_score": (
+                round(sum(quality_scores) / len(quality_scores), 3)
+                if quality_scores
+                else 0.0
+            ),
             "min_score": min(quality_scores) if quality_scores else 0.0,
             "max_score": max(quality_scores) if quality_scores else 0.0,
-            "score_distribution": score_distribution
-        }
+            "score_distribution": score_distribution,
+        },
     }
-    
+
     # Save statistics
     stats_path = run_path / "statistics.json"
     import json
-    with open(stats_path, 'w') as f:
+
+    with open(stats_path, "w") as f:
         json.dump(statistics, f, indent=2)
-    
+
     return statistics
 
 
-def prepare_image_for_api(image_path: Path, max_size: Tuple[int, int] = (1024, 1024)) -> str:
+def prepare_image_for_api(
+    image_path: Path, max_size: Tuple[int, int] = (1024, 1024)
+) -> str:
     """Prepare image file for API consumption."""
-    with open(image_path, 'rb') as f:
+    with open(image_path, "rb") as f:
         raw_image_bytes = f.read()
-    
+
     # Process the image - convert to RGB and resize if needed
     image_pil = Image.open(io.BytesIO(raw_image_bytes)).convert("RGB")
     original_size = image_pil.size
-    
+
     # Apply thumbnail to maintain aspect ratio within max_size
     image_pil.thumbnail(max_size)
-    
+
     logger.info(
         "Image prepared for API",
         original_size=original_size,
         processed_size=image_pil.size,
         path=str(image_path),
     )
-    
+
     # Encode the processed image
     return encode_image_to_base64(image_pil)
 
@@ -360,22 +383,23 @@ def save_image_with_metadata(
 ) -> Tuple[Path, Path]:
     """Save image and metadata to specified path."""
     ensure_directory(output_path.parent)
-    
+
     # Add timestamp to filename if requested
     if include_timestamp:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         stem = f"{output_path.stem}_{timestamp}"
         output_path = output_path.with_stem(stem)
-    
+
     # Save image
     image.save(output_path)
-    
+
     # Save metadata as JSON
-    metadata_path = output_path.with_suffix('.json')
+    metadata_path = output_path.with_suffix(".json")
     import json
-    with open(metadata_path, 'w') as f:
+
+    with open(metadata_path, "w") as f:
         json.dump(metadata, f, indent=2, default=str)
-    
+
     return output_path, metadata_path
 
 
@@ -388,19 +412,19 @@ def upload_to_gcs(
     """Upload file to Google Cloud Storage."""
     if storage_client is None:
         storage_client = storage.Client()
-    
+
     bucket = storage_client.bucket(bucket_name)
     blob = bucket.blob(gcs_path)
-    
+
     blob.upload_from_filename(str(local_path))
-    
+
     gcs_uri = f"gs://{bucket_name}/{gcs_path}"
     logger.info(
         "File uploaded to GCS",
         local_path=str(local_path),
         gcs_uri=gcs_uri,
     )
-    
+
     return gcs_uri
 
 
@@ -412,23 +436,23 @@ def download_from_gcs(
     """Download file from Google Cloud Storage."""
     if storage_client is None:
         storage_client = storage.Client()
-    
+
     # Parse GCS URI
     if not gcs_uri.startswith("gs://"):
         raise ValueError(f"Invalid GCS URI: {gcs_uri}")
-    
+
     parts = gcs_uri[5:].split("/", 1)
     if len(parts) != 2:
         raise ValueError(f"Invalid GCS URI format: {gcs_uri}")
-    
+
     bucket_name, object_name = parts
-    
+
     bucket = storage_client.bucket(bucket_name)
     blob = bucket.blob(object_name)
-    
+
     ensure_directory(local_path.parent)
     blob.download_to_filename(str(local_path))
-    
+
     logger.info(
         "File downloaded from GCS",
         gcs_uri=gcs_uri,
@@ -446,7 +470,7 @@ def retry_with_backoff(
 ) -> Any:
     """Retry function with exponential backoff."""
     last_exception = None
-    
+
     for attempt in range(max_retries + 1):
         try:
             return func()
@@ -454,8 +478,8 @@ def retry_with_backoff(
             last_exception = e
             if attempt == max_retries:
                 break
-            
-            delay = min(base_delay * (backoff_factor ** attempt), max_delay)
+
+            delay = min(base_delay * (backoff_factor**attempt), max_delay)
             logger.warning(
                 "Function failed, retrying",
                 attempt=attempt + 1,
@@ -464,7 +488,7 @@ def retry_with_backoff(
                 error=str(e),
             )
             time.sleep(delay)
-    
+
     raise last_exception
 
 
@@ -478,7 +502,7 @@ async def async_retry_with_backoff(
 ) -> Any:
     """Async retry function with exponential backoff."""
     last_exception = None
-    
+
     for attempt in range(max_retries + 1):
         try:
             if asyncio.iscoroutinefunction(func):
@@ -489,8 +513,8 @@ async def async_retry_with_backoff(
             last_exception = e
             if attempt == max_retries:
                 break
-            
-            delay = min(base_delay * (backoff_factor ** attempt), max_delay)
+
+            delay = min(base_delay * (backoff_factor**attempt), max_delay)
             logger.warning(
                 "Async function failed, retrying",
                 attempt=attempt + 1,
@@ -499,7 +523,7 @@ async def async_retry_with_backoff(
                 error=str(e),
             )
             await asyncio.sleep(delay)
-    
+
     raise last_exception
 
 
@@ -512,7 +536,7 @@ def calculate_processing_stats(
 ) -> Dict[str, Any]:
     """Calculate processing statistics."""
     duration = end_time - start_time
-    
+
     return {
         "duration_seconds": round(duration, 2),
         "total_items": total_items,
@@ -526,36 +550,33 @@ def calculate_processing_stats(
 
 class ProgressTracker:
     """Track processing progress."""
-    
+
     def __init__(self, total_items: int):
         self.total_items = total_items
         self.completed_items = 0
         self.failed_items = 0
         self.start_time = time.time()
         self.last_update = self.start_time
-        
+
     def update(self, success: bool = True) -> None:
         """Update progress."""
         self.completed_items += 1
         if not success:
             self.failed_items += 1
-        
+
         # Log progress every 10 items or 30 seconds
         current_time = time.time()
-        if (
-            self.completed_items % 10 == 0 
-            or current_time - self.last_update > 30
-        ):
+        if self.completed_items % 10 == 0 or current_time - self.last_update > 30:
             self.log_progress()
             self.last_update = current_time
-    
+
     def log_progress(self) -> None:
         """Log current progress."""
         elapsed = time.time() - self.start_time
         rate = self.completed_items / max(elapsed, 0.001)
         remaining = self.total_items - self.completed_items
         eta = remaining / max(rate, 0.001)
-        
+
         logger.info(
             "Processing progress",
             completed=self.completed_items,
@@ -565,7 +586,7 @@ class ProgressTracker:
             rate_per_second=round(rate, 2),
             eta_seconds=round(eta, 1),
         )
-    
+
     def get_final_stats(self) -> Dict[str, Any]:
         """Get final processing statistics."""
         return calculate_processing_stats(

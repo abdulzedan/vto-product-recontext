@@ -1,8 +1,9 @@
 """Pytest configuration and fixtures."""
 
-import pytest
 from pathlib import Path
 from unittest.mock import MagicMock
+
+import pytest
 
 from bulk_image_processor.config import Settings
 from bulk_image_processor.downloader import ImageRecord
@@ -12,13 +13,16 @@ from bulk_image_processor.downloader import ImageRecord
 def mock_settings():
     """Mock settings for testing."""
     import os
+
     # Set required environment variables for testing
-    os.environ.update({
-        'PROJECT_ID': 'test-project',
-        'GOOGLE_CLOUD_STORAGE': 'test-bucket',
-        'GEMINI_API_KEY': 'test-gemini-key'
-    })
-    
+    os.environ.update(
+        {
+            "PROJECT_ID": "test-project",
+            "GOOGLE_CLOUD_STORAGE": "test-bucket",
+            "GEMINI_API_KEY": "test-gemini-key",
+        }
+    )
+
     try:
         return Settings(
             project_id="test-project",
@@ -38,7 +42,7 @@ def mock_settings():
         )
     finally:
         # Clean up environment variables
-        for key in ['PROJECT_ID', 'GOOGLE_CLOUD_STORAGE', 'GEMINI_API_KEY']:
+        for key in ["PROJECT_ID", "GOOGLE_CLOUD_STORAGE", "GEMINI_API_KEY"]:
             os.environ.pop(key, None)
 
 
@@ -69,8 +73,9 @@ def sample_csv_data():
 def temp_csv_file(tmp_path, sample_csv_data):
     """Create a temporary CSV file for testing."""
     csv_path = tmp_path / "test_images.csv"
-    with open(csv_path, 'w', newline='') as f:
+    with open(csv_path, "w", newline="") as f:
         import csv
+
         writer = csv.writer(f)
         writer.writerows(sample_csv_data)
     return csv_path

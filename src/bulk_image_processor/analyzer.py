@@ -9,7 +9,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 
 import google.generativeai as genai
 import structlog
-from google.generativeai.types import HarmCategory, HarmBlockThreshold
+from google.generativeai.types import HarmBlockThreshold, HarmCategory
 from PIL import Image
 from pydantic import BaseModel, Field
 from tenacity import retry, stop_after_attempt, wait_exponential
@@ -22,6 +22,7 @@ logger = structlog.get_logger(__name__)
 
 class ImageCategory(str, Enum):
     """Image classification categories."""
+
     APPAREL = "apparel"
     PRODUCT = "product"
     UNKNOWN = "unknown"
@@ -29,6 +30,7 @@ class ImageCategory(str, Enum):
 
 class ClassificationResult(BaseModel):
     """Result of image classification."""
+
     category: ImageCategory
     confidence: float = Field(ge=0.0, le=1.0)
     reasoning: str
@@ -39,7 +41,10 @@ class ClassificationResult(BaseModel):
 
 class FeedbackResult(BaseModel):
     """Result of image quality feedback."""
-    garment_applied: bool = True  # Whether the garment was actually applied to the model
+
+    garment_applied: bool = (
+        True  # Whether the garment was actually applied to the model
+    )
     length_accurate: bool = True  # Whether the garment length matches the original
     passed: bool
     score: float = Field(ge=0.0, le=1.0)
@@ -51,17 +56,17 @@ class FeedbackResult(BaseModel):
 
 class GeminiAnalyzer:
     """Gemini-based image analyzer for classification and feedback."""
-    
+
     def __init__(self, settings: Settings):
         self.settings = settings
         self.client = None
         self._setup_client()
-    
+
     def _setup_client(self) -> None:
         """Initialize Gemini client."""
         try:
             genai.configure(api_key=self.settings.gemini.api_key)
-            
+
             # Configure safety settings
             safety_settings = {
                 HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
@@ -69,19 +74,19 @@ class GeminiAnalyzer:
                 HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
                 HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
             }
-            
+
             # Initialize model
             self.client = genai.GenerativeModel(
                 model_name=self.settings.gemini.model_name,
                 safety_settings=safety_settings,
             )
-            
+
             logger.info("Gemini client initialized successfully")
-            
+
         except Exception as e:
             logger.error("Failed to initialize Gemini client", error=str(e))
             raise
-    
+
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=4, max=10),
@@ -94,15 +99,15 @@ class GeminiAnalyzer:
     ) -> ClassificationResult:
         """Classify an image as apparel or product."""
         start_time = time.time()
-        
+
         try:
             # Prepare image for analysis
             if isinstance(image, (str, Path)):
                 image = Image.open(image)
-            
+
             # Create classification prompt
             prompt = self._create_classification_prompt(additional_context)
-            
+
             # Generate response using native async
             response = await self.client.generate_content_async(
                 [prompt, image],
@@ -111,12 +116,12 @@ class GeminiAnalyzer:
                     max_output_tokens=self.settings.gemini.max_output_tokens,
                 ),
             )
-            
+
             # Parse response
             result = self._parse_classification_response(response.text)
-            
+
             analysis_time = time.time() - start_time
-            
+
             logger.info(
                 "Image classification completed",
                 category=result.category,
@@ -124,9 +129,9 @@ class GeminiAnalyzer:
                 analysis_time=round(analysis_time, 2),
                 detected_items=result.detected_items,
             )
-            
+
             return result
-            
+
         except Exception as e:
             analysis_time = time.time() - start_time
             logger.error(
@@ -135,8 +140,10 @@ class GeminiAnalyzer:
                 analysis_time=round(analysis_time, 2),
             )
             raise
-    
-    def _create_classification_prompt(self, additional_context: Optional[str] = None) -> str:
+
+    def _create_classification_prompt(
+        self, additional_context: Optional[str] = None
+    ) -> str:
         """Create prompt for image classification."""
         base_prompt = """
         Analyze this image and classify it as either "apparel" or "product".
@@ -172,42 +179,46 @@ class GeminiAnalyzer:
             }
         }
         """
-        
+
         if additional_context:
             base_prompt += f"\n\nAdditional context: {additional_context}"
-        
+
         return base_prompt
-    
-    def _parse_classification_response(self, response_text: str) -> ClassificationResult:
+
+    def _parse_classification_response(
+        self, response_text: str
+    ) -> ClassificationResult:
         """Parse classification response from Gemini."""
         try:
             # Clean response text
             response_text = response_text.strip()
-            
+
             # Extract JSON from response
-            start_idx = response_text.find('{')
-            end_idx = response_text.rfind('}') + 1
-            
+            start_idx = response_text.find("{")
+            end_idx = response_text.rfind("}") + 1
+
             if start_idx == -1 or end_idx == 0:
                 raise ValueError("No JSON found in response")
-            
+
             json_str = response_text[start_idx:end_idx]
             response_data = json.loads(json_str)
-            
+
             # Validate and create result
             category = response_data.get("category", "unknown").lower()
             if category not in ["apparel", "product"]:
                 category = "unknown"
-            
+
             return ClassificationResult(
                 category=ImageCategory(category),
-                confidence=min(max(float(response_data.get("confidence", 0.5)), 0.0), 1.0),
+                confidence=min(
+                    max(float(response_data.get("confidence", 0.5)), 0.0), 1.0
+                ),
                 reasoning=response_data.get("reasoning", "No reasoning provided"),
                 detected_items=response_data.get("detected_items", []),
                 target_gender=response_data.get("target_gender"),
                 metadata=response_data.get("metadata", {}),
             )
-            
+
         except Exception as e:
             logger.warning("Failed to parse classification response", error=str(e))
             return ClassificationResult(
@@ -218,7 +229,7 @@ class GeminiAnalyzer:
                 target_gender=None,
                 metadata={},
             )
-    
+
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=4, max=10),
@@ -233,7 +244,7 @@ class GeminiAnalyzer:
     ) -> FeedbackResult:
         """Analyze quality of Virtual Try-On result."""
         start_time = time.time()
-        
+
         try:
             # Prepare images
             if isinstance(result_image, (str, Path)):
@@ -242,14 +253,16 @@ class GeminiAnalyzer:
                 original_apparel = Image.open(original_apparel)
             if isinstance(model_image, (str, Path)):
                 model_image = Image.open(model_image)
-            
+
             # First, get a detailed description of the apparel if not provided
             if not apparel_description:
-                apparel_description = await self._get_apparel_description(original_apparel)
-            
+                apparel_description = await self._get_apparel_description(
+                    original_apparel
+                )
+
             # Create feedback prompt with apparel context
             prompt = self._create_vto_feedback_prompt(apparel_description)
-            
+
             # Generate response using native async
             response = await self.client.generate_content_async(
                 [prompt, result_image, original_apparel, model_image],
@@ -258,21 +271,21 @@ class GeminiAnalyzer:
                     max_output_tokens=self.settings.gemini.max_output_tokens,
                 ),
             )
-            
+
             # Parse response
             result = self._parse_feedback_response(response.text)
-            
+
             analysis_time = time.time() - start_time
-            
+
             logger.info(
                 "Virtual Try-On quality analysis completed",
                 passed=result.passed,
                 score=result.score,
                 analysis_time=round(analysis_time, 2),
             )
-            
+
             return result
-            
+
         except Exception as e:
             analysis_time = time.time() - start_time
             logger.error(
@@ -281,7 +294,7 @@ class GeminiAnalyzer:
                 analysis_time=round(analysis_time, 2),
             )
             raise
-    
+
     async def _get_apparel_description(self, apparel_image: Image.Image) -> str:
         """Get detailed description of apparel for comparison."""
         try:
@@ -301,7 +314,7 @@ class GeminiAnalyzer:
             
             Format: Return a single descriptive sentence.
             """
-            
+
             response = await self.client.generate_content_async(
                 [prompt, apparel_image],
                 generation_config=genai.types.GenerationConfig(
@@ -309,15 +322,15 @@ class GeminiAnalyzer:
                     max_output_tokens=256,
                 ),
             )
-            
+
             description = response.text.strip()
             logger.info("Apparel description generated", description=description)
             return description
-            
+
         except Exception as e:
             logger.warning("Failed to generate apparel description", error=str(e))
             return "apparel item"
-    
+
     def _create_vto_feedback_prompt(self, apparel_description: str) -> str:
         """Create prompt for Virtual Try-On feedback."""
         return f"""
@@ -394,7 +407,7 @@ class GeminiAnalyzer:
             }}
         }}
         """
-    
+
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=4, max=10),
@@ -408,17 +421,17 @@ class GeminiAnalyzer:
     ) -> FeedbackResult:
         """Analyze quality of Product Recontext result."""
         start_time = time.time()
-        
+
         try:
             # Prepare images
             if isinstance(result_image, (str, Path)):
                 result_image = Image.open(result_image)
             if isinstance(original_product, (str, Path)):
                 original_product = Image.open(original_product)
-            
+
             # Create feedback prompt
             prompt = self._create_product_recontext_feedback_prompt(generated_prompt)
-            
+
             # Generate response using native async
             response = await self.client.generate_content_async(
                 [prompt, result_image, original_product],
@@ -427,21 +440,21 @@ class GeminiAnalyzer:
                     max_output_tokens=self.settings.gemini.max_output_tokens,
                 ),
             )
-            
+
             # Parse response
             result = self._parse_feedback_response(response.text)
-            
+
             analysis_time = time.time() - start_time
-            
+
             logger.info(
                 "Product Recontext quality analysis completed",
                 passed=result.passed,
                 score=result.score,
                 analysis_time=round(analysis_time, 2),
             )
-            
+
             return result
-            
+
         except Exception as e:
             analysis_time = time.time() - start_time
             logger.error(
@@ -450,7 +463,7 @@ class GeminiAnalyzer:
                 analysis_time=round(analysis_time, 2),
             )
             raise
-    
+
     def _create_product_recontext_feedback_prompt(self, generated_prompt: str) -> str:
         """Create prompt for Product Recontext feedback."""
         return f"""
@@ -491,29 +504,29 @@ class GeminiAnalyzer:
             }}
         }}
         """
-    
+
     def _parse_feedback_response(self, response_text: str) -> FeedbackResult:
         """Parse feedback response from Gemini."""
         try:
             # Clean response text
             response_text = response_text.strip()
-            
+
             # Extract JSON from response
-            start_idx = response_text.find('{')
-            end_idx = response_text.rfind('}') + 1
-            
+            start_idx = response_text.find("{")
+            end_idx = response_text.rfind("}") + 1
+
             if start_idx == -1 or end_idx == 0:
                 raise ValueError("No JSON found in response")
-            
+
             json_str = response_text[start_idx:end_idx]
             response_data = json.loads(json_str)
-            
+
             # Validate and create result
             garment_applied = bool(response_data.get("garment_applied", True))
             length_accurate = bool(response_data.get("length_accurate", True))
             passed = bool(response_data.get("passed", False))
             score = min(max(float(response_data.get("score", 0.0)), 0.0), 1.0)
-            
+
             return FeedbackResult(
                 garment_applied=garment_applied,
                 length_accurate=length_accurate,
@@ -524,7 +537,7 @@ class GeminiAnalyzer:
                 suggestions=response_data.get("suggestions", []),
                 metadata=response_data.get("metadata", {}),
             )
-            
+
         except Exception as e:
             logger.warning("Failed to parse feedback response", error=str(e))
             return FeedbackResult(
@@ -537,7 +550,7 @@ class GeminiAnalyzer:
                 suggestions=[],
                 metadata={},
             )
-    
+
     async def generate_product_recontext_prompt(
         self,
         product_image: Union[Image.Image, Path, str],
@@ -545,15 +558,15 @@ class GeminiAnalyzer:
     ) -> str:
         """Generate a compelling prompt for Product Recontext."""
         start_time = time.time()
-        
+
         try:
             # Prepare image
             if isinstance(product_image, (str, Path)):
                 product_image = Image.open(product_image)
-            
+
             # Create prompt generation prompt
             prompt = self._create_prompt_generation_prompt(product_description)
-            
+
             # Generate response using native async
             response = await self.client.generate_content_async(
                 [prompt, product_image],
@@ -562,23 +575,23 @@ class GeminiAnalyzer:
                     max_output_tokens=512,
                 ),
             )
-            
+
             # Extract and clean the generated prompt
             generated_prompt = response.text.strip()
-            
+
             # Remove any quotation marks or formatting
             generated_prompt = generated_prompt.strip('"').strip("'")
-            
+
             generation_time = time.time() - start_time
-            
+
             logger.info(
                 "Product recontext prompt generated",
                 prompt_length=len(generated_prompt),
                 generation_time=round(generation_time, 2),
             )
-            
+
             return generated_prompt
-            
+
         except Exception as e:
             generation_time = time.time() - start_time
             logger.error(
@@ -587,8 +600,10 @@ class GeminiAnalyzer:
                 generation_time=round(generation_time, 2),
             )
             raise
-    
-    def _create_prompt_generation_prompt(self, product_description: Optional[str] = None) -> str:
+
+    def _create_prompt_generation_prompt(
+        self, product_description: Optional[str] = None
+    ) -> str:
         """Create prompt for generating Product Recontext prompts."""
         base_prompt = """
         Analyze this product image and identify what type of accessory it is, then generate an appropriate scene prompt based on these guidelines:
@@ -622,12 +637,12 @@ class GeminiAnalyzer:
         
         Generate ONLY the prompt text for the appropriate accessory type, no additional explanation.
         """
-        
+
         if product_description:
             base_prompt += f"\n\nProduct context: {product_description}"
-        
+
         return base_prompt
-    
+
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=4, max=10),
@@ -642,30 +657,34 @@ class GeminiAnalyzer:
     ) -> Dict[str, Any]:
         """Recommend the best model for fashion coordination with the given apparel."""
         start_time = time.time()
-        
+
         try:
             # Prepare apparel image
             if isinstance(apparel_image, (str, Path)):
                 apparel_image = Image.open(apparel_image)
-            
+
             # Filter available models by gender and exclusions
-            target_gender = apparel_info.get('target_gender')
+            target_gender = apparel_info.get("target_gender")
             exclude_models = exclude_models or []
-            
+
             suitable_models = []
             for model in available_models:
-                if model['id'] in exclude_models:
+                if model["id"] in exclude_models:
                     continue
-                if target_gender and model['gender'] != target_gender:
+                if target_gender and model["gender"] != target_gender:
                     continue
                 suitable_models.append(model)
-            
+
             if not suitable_models:
-                raise ValueError(f"No suitable models available for gender '{target_gender}' after exclusions")
-            
+                raise ValueError(
+                    f"No suitable models available for gender '{target_gender}' after exclusions"
+                )
+
             # Create fashion coordination prompt
-            prompt = self._create_fashion_coordination_prompt(apparel_info, suitable_models)
-            
+            prompt = self._create_fashion_coordination_prompt(
+                apparel_info, suitable_models
+            )
+
             # Generate response using native async
             response = await self.client.generate_content_async(
                 [prompt, apparel_image],
@@ -674,21 +693,23 @@ class GeminiAnalyzer:
                     max_output_tokens=1024,
                 ),
             )
-            
+
             # Parse response
-            result = self._parse_fashion_coordination_response(response.text, suitable_models)
-            
+            result = self._parse_fashion_coordination_response(
+                response.text, suitable_models
+            )
+
             coordination_time = time.time() - start_time
-            
+
             logger.info(
                 "Fashion coordination completed",
-                recommended_model=result['recommended_model_id'],
-                coordination_score=result.get('coordination_score', 0),
+                recommended_model=result["recommended_model_id"],
+                coordination_score=result.get("coordination_score", 0),
                 analysis_time=round(coordination_time, 2),
             )
-            
+
             return result
-            
+
         except Exception as e:
             coordination_time = time.time() - start_time
             logger.error(
@@ -697,18 +718,20 @@ class GeminiAnalyzer:
                 analysis_time=round(coordination_time, 2),
             )
             raise
-    
-    def _create_fashion_coordination_prompt(self, apparel_info: Dict[str, Any], models: List[Dict[str, Any]]) -> str:
+
+    def _create_fashion_coordination_prompt(
+        self, apparel_info: Dict[str, Any], models: List[Dict[str, Any]]
+    ) -> str:
         """Create prompt for fashion coordination recommendation."""
         # Build model options description
         model_descriptions = []
         for i, model in enumerate(models, 1):
-            outfit = model.get('outfit', {})
+            outfit = model.get("outfit", {})
             description = f"{i}. {model['id']}: {outfit.get('description', 'No description')} (File: {model['filename']})"
             model_descriptions.append(description)
-        
-        models_text = '\n'.join(model_descriptions)
-        
+
+        models_text = "\n".join(model_descriptions)
+
         return f"""
         Analyze this apparel item and recommend the best model from the available options for optimal fashion coordination.
         
@@ -772,27 +795,29 @@ class GeminiAnalyzer:
             "fashion_tips": "tips for why this combination works well"
         }}
         """
-    
-    def _parse_fashion_coordination_response(self, response_text: str, models: List[Dict[str, Any]]) -> Dict[str, Any]:
+
+    def _parse_fashion_coordination_response(
+        self, response_text: str, models: List[Dict[str, Any]]
+    ) -> Dict[str, Any]:
         """Parse fashion coordination response from Gemini."""
         try:
             # Clean response text
             response_text = response_text.strip()
-            
+
             # Extract JSON from response
-            start_idx = response_text.find('{')
-            end_idx = response_text.rfind('}') + 1
-            
+            start_idx = response_text.find("{")
+            end_idx = response_text.rfind("}") + 1
+
             if start_idx == -1 or end_idx == 0:
                 raise ValueError("No JSON found in response")
-            
+
             json_str = response_text[start_idx:end_idx]
             response_data = json.loads(json_str)
-            
+
             # Validate recommended model ID exists
             recommended_id = response_data.get("recommended_model_id", "")
-            valid_ids = [model['id'] for model in models]
-            
+            valid_ids = [model["id"] for model in models]
+
             if recommended_id not in valid_ids:
                 logger.warning(
                     "Recommended model ID not found in available models, using first available",
@@ -800,28 +825,32 @@ class GeminiAnalyzer:
                     valid_ids=valid_ids,
                 )
                 recommended_id = valid_ids[0] if valid_ids else "unknown"
-            
+
             return {
-                'recommended_model_id': recommended_id,
-                'coordination_score': min(max(float(response_data.get('coordination_score', 0.5)), 0.0), 1.0),
-                'reasoning': response_data.get('reasoning', 'No reasoning provided'),
-                'color_analysis': response_data.get('color_analysis', ''),
-                'style_analysis': response_data.get('style_analysis', ''),
-                'alternative_models': response_data.get('alternative_models', []),
-                'fashion_tips': response_data.get('fashion_tips', ''),
+                "recommended_model_id": recommended_id,
+                "coordination_score": min(
+                    max(float(response_data.get("coordination_score", 0.5)), 0.0), 1.0
+                ),
+                "reasoning": response_data.get("reasoning", "No reasoning provided"),
+                "color_analysis": response_data.get("color_analysis", ""),
+                "style_analysis": response_data.get("style_analysis", ""),
+                "alternative_models": response_data.get("alternative_models", []),
+                "fashion_tips": response_data.get("fashion_tips", ""),
             }
-            
+
         except Exception as e:
-            logger.warning("Failed to parse fashion coordination response", error=str(e))
+            logger.warning(
+                "Failed to parse fashion coordination response", error=str(e)
+            )
             # Fallback to first available model
             return {
-                'recommended_model_id': models[0]['id'] if models else 'model_1_woman',
-                'coordination_score': 0.5,
-                'reasoning': f'Failed to parse response: {str(e)}',
-                'color_analysis': '',
-                'style_analysis': '',
-                'alternative_models': [],
-                'fashion_tips': '',
+                "recommended_model_id": models[0]["id"] if models else "model_1_woman",
+                "coordination_score": 0.5,
+                "reasoning": f"Failed to parse response: {str(e)}",
+                "color_analysis": "",
+                "style_analysis": "",
+                "alternative_models": [],
+                "fashion_tips": "",
             }
 
 
