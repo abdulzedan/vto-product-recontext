@@ -164,16 +164,17 @@ echo ""
 echo "Step 4: Setting up Google Cloud Storage bucket..."
 
 # Check if bucket exists
-if gsutil ls -b "gs://$BUCKET_NAME" &>/dev/null; then
+if gcloud storage ls "gs://$BUCKET_NAME" &>/dev/null; then
     echo -e "${GREEN}✓ Bucket already exists: gs://$BUCKET_NAME${NC}"
 else
     echo "Creating bucket: gs://$BUCKET_NAME in $LOCATION..."
-    if gsutil mb -l "$LOCATION" "gs://$BUCKET_NAME" 2>/dev/null; then
+    if gcloud storage buckets create "gs://$BUCKET_NAME" --location="$LOCATION" 2>/dev/null; then
         echo -e "${GREEN}✓ Bucket created successfully${NC}"
     else
         echo -e "${RED}✗ Failed to create bucket${NC}"
-        echo "  Bucket name might be taken or invalid"
+        echo "  Bucket name might be taken or you may not have permissions"
         echo "  Try a different bucket name in your .env file"
+        echo "  Or check if you have Storage Admin permissions"
         exit 1
     fi
 fi
@@ -183,7 +184,7 @@ echo ""
 echo "Step 5: Configuring bucket for public access..."
 echo -e "${YELLOW}IMPORTANT: Disabling uniform bucket-level access to allow public URLs${NC}"
 
-if gsutil uniformbucketlevelaccess set off "gs://$BUCKET_NAME" 2>/dev/null; then
+if gcloud storage buckets update "gs://$BUCKET_NAME" --no-uniform-bucket-level-access 2>/dev/null; then
     echo -e "${GREEN}✓ Uniform bucket-level access DISABLED${NC}"
     echo "  Result images will be publicly accessible via URLs"
 else
@@ -194,7 +195,7 @@ fi
 # Verify the setting
 echo ""
 echo "Verifying bucket configuration..."
-UNIFORM_ACCESS=$(gsutil uniformbucketlevelaccess get "gs://$BUCKET_NAME" 2>/dev/null | grep "Enabled:" | awk '{print $2}')
+UNIFORM_ACCESS=$(gcloud storage buckets describe "gs://$BUCKET_NAME" --format="value(iamConfiguration.uniformBucketLevelAccess.enabled)" 2>/dev/null)
 
 if [ "$UNIFORM_ACCESS" = "False" ]; then
     echo -e "${GREEN}✓ Bucket configured correctly for public access${NC}"
@@ -210,7 +211,7 @@ fi
 # Step 6: Set default bucket permissions for new objects
 echo ""
 echo "Step 6: Setting default ACL for public read access..."
-if gsutil defacl set public-read "gs://$BUCKET_NAME" 2>/dev/null; then
+if gcloud storage buckets update "gs://$BUCKET_NAME" --default-object-acl=public-read 2>/dev/null; then
     echo -e "${GREEN}✓ Default ACL set to public-read${NC}"
 else
     echo -e "${YELLOW}⚠ Could not set default ACL (this is optional)${NC}"
@@ -224,7 +225,7 @@ DIRS=("virtual-try-on" "product-recontext" "logs")
 for dir in "${DIRS[@]}"; do
     # Create a placeholder file to establish the directory
     echo "Creating directory: $dir/"
-    echo "placeholder" | gsutil cp - "gs://$BUCKET_NAME/$dir/.keep" 2>/dev/null || true
+    echo "placeholder" | gcloud storage cp - "gs://$BUCKET_NAME/$dir/.keep" 2>/dev/null || true
 done
 echo -e "${GREEN}✓ Bucket directory structure created${NC}"
 
