@@ -22,7 +22,7 @@ class GoogleCloudConfig(BaseModel):
 
     project_id: str = Field(..., min_length=1)
     location: str = Field(default="us-central1")
-    model_endpoint: str = Field(default="virtual-try-on-exp-05-31")
+    model_endpoint: str = Field(default="virtual-try-on-preview-08-04")
     model_endpoint_product: str = Field(
         default="imagen-product-recontext-preview-06-30"
     )
@@ -70,7 +70,7 @@ class Settings(BaseSettings):
     project_id: str = Field(..., validation_alias="PROJECT_ID")
     location: str = Field(default="us-central1", validation_alias="LOCATION")
     model_endpoint: str = Field(
-        default="virtual-try-on-exp-05-31", validation_alias="MODEL_ENDPOINT"
+        default="virtual-try-on-preview-08-04", validation_alias="MODEL_ENDPOINT"
     )
     model_endpoint_product: str = Field(
         default="imagen-product-recontext-preview-06-30",

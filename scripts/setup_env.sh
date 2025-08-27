@@ -70,9 +70,18 @@ mkdir -p image_folder
 if [ ! -f .env ]; then
     echo "Creating .env file from template..."
     cp .env.example .env
-    echo "Please edit .env file with your credentials"
+    echo ""
+    echo "⚠️  IMPORTANT: The .env file contains placeholder values that MUST be updated!"
+    echo ""
 else
     echo ".env file already exists"
+    # Check for placeholder values
+    if grep -q "your-project-id\|your-bucket-name\|your-gemini-api-key" .env; then
+        echo ""
+        echo "⚠️  WARNING: Your .env file still contains placeholder values!"
+        echo "   Please update all 'your-*' values with actual credentials"
+        echo ""
+    fi
 fi
 
 # Create sample CSV file if it doesn't exist
@@ -98,10 +107,10 @@ pytest tests/test_exceptions.py tests/test_config.py::TestProcessingConfig -v ||
 echo "Setup completed successfully!"
 echo ""
 echo "Next steps:"
-echo "1. Edit .env file with your Google Cloud credentials:"
-echo "   - PROJECT_ID: Your Google Cloud project ID"
-echo "   - GOOGLE_CLOUD_STORAGE: Your GCS bucket name (with uniform access disabled)"
-echo "   - GEMINI_API_KEY: Your Gemini API key from AI Studio"
+echo "1. REQUIRED: Edit .env file with your credentials:"
+echo "   - PROJECT_ID: Replace 'your-project-id' with your Google Cloud project ID"
+echo "   - GOOGLE_CLOUD_STORAGE: Replace 'your-bucket-name' with your GCS bucket name (with uniform access disabled)"
+echo "   - GEMINI_API_KEY: Replace 'your-gemini-api-key' with your API key from Google AI Studio"
 echo "2. Set up Google Cloud authentication:"
 echo "   - Option A: gcloud auth application-default login"
 echo "   - Option B: export GOOGLE_APPLICATION_CREDENTIALS=/path/to/service-key.json"
