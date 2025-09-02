@@ -5,6 +5,11 @@
 
 Bulk image processing system that routes product images to Virtual Try-On for apparel or Product Recontext for other items using intelligent classification.
 
+## Architecture
+
+<img width="2148" height="1110" alt="image" src="https://github.com/user-attachments/assets/51e9380a-6142-46d0-8ae2-35922d669a64" />
+
+
 ## Features
 
 - Automatic image classification (apparel vs products)
